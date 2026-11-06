@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS strategy_legs;
+DROP TABLE IF EXISTS strategies;
+DROP TYPE IF EXISTS leg_side;
+DROP TABLE IF EXISTS users;
