@@ -26,7 +26,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 // UpsertUnderlying inserts or updates an underlying keyed by its TSETMC
 // instrument code and returns its id. It never clobbers an existing name/ISIN
 // with an empty value.
-func (r *Repository) UpsertUnderlying(ctx context.Context, info datasource.InstrumentInfo) (int, error) {
+func (r *Repository) UpsertUnderlying(ctx context.Context, info datasource.InstrumentInfo, kind Kind) (int, error) {
 	symbol := firstNonEmpty(info.Symbol, info.Name, info.InsCode)
 	var name, isin *string
 	if info.Name != "" {
@@ -35,16 +35,23 @@ func (r *Repository) UpsertUnderlying(ctx context.Context, info datasource.Instr
 	if info.ISIN != "" {
 		isin = &info.ISIN
 	}
+	if !kind.Valid() {
+		kind = KindOther
+	}
+	// On re-collection, never downgrade an already-known kind back to 'other'
+	// (which is what an enrichment failure yields).
 	const q = `
-		INSERT INTO underlyings (symbol, name, isin, ins_code)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO underlyings (symbol, name, isin, ins_code, kind)
+		VALUES ($1, $2, $3, $4, $5::underlying_kind)
 		ON CONFLICT (ins_code) DO UPDATE SET
 			symbol = EXCLUDED.symbol,
 			name   = COALESCE(EXCLUDED.name, underlyings.name),
-			isin   = COALESCE(EXCLUDED.isin, underlyings.isin)
+			isin   = COALESCE(EXCLUDED.isin, underlyings.isin),
+			kind   = CASE WHEN EXCLUDED.kind = 'other'
+			              THEN underlyings.kind ELSE EXCLUDED.kind END
 		RETURNING id`
 	var id int
-	err := r.db.QueryRow(ctx, q, symbol, name, isin, info.InsCode).Scan(&id)
+	err := r.db.QueryRow(ctx, q, symbol, name, isin, info.InsCode, string(kind)).Scan(&id)
 	return id, err
 }
 
@@ -159,12 +166,18 @@ type Underlying struct {
 	Name    *string `json:"name"`
 	ISIN    *string `json:"isin"`
 	InsCode *string `json:"insCode"`
+	Kind    string  `json:"kind"`
 }
 
-// ListUnderlyings returns all known underlyings ordered by symbol.
-func (r *Repository) ListUnderlyings(ctx context.Context) ([]Underlying, error) {
-	rows, err := r.db.Query(ctx,
-		`SELECT id, symbol, name, isin, ins_code FROM underlyings ORDER BY symbol`)
+// ListUnderlyings returns known underlyings ordered by symbol. When kind is
+// non-empty, only underlyings of that kind are returned.
+func (r *Repository) ListUnderlyings(ctx context.Context, kind string) ([]Underlying, error) {
+	const q = `
+		SELECT id, symbol, name, isin, ins_code, kind
+		FROM underlyings
+		WHERE ($1 = '' OR kind::text = $1)
+		ORDER BY symbol`
+	rows, err := r.db.Query(ctx, q, kind)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +186,7 @@ func (r *Repository) ListUnderlyings(ctx context.Context) ([]Underlying, error) 
 	var out []Underlying
 	for rows.Next() {
 		var u Underlying
-		if err := rows.Scan(&u.ID, &u.Symbol, &u.Name, &u.ISIN, &u.InsCode); err != nil {
+		if err := rows.Scan(&u.ID, &u.Symbol, &u.Name, &u.ISIN, &u.InsCode, &u.Kind); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -183,26 +196,28 @@ func (r *Repository) ListUnderlyings(ctx context.Context) ([]Underlying, error) 
 
 // OptionChainRow is a contract plus its latest quote, for API clients.
 type OptionChainRow struct {
-	ContractID    int        `json:"contractId"`
-	Symbol        string     `json:"symbol"`
-	UnderlyingID  int        `json:"underlyingId"`
-	UnderlyingSym string     `json:"underlyingSymbol"`
-	OptionType    string     `json:"optionType"`
-	StrikePrice   int64      `json:"strikePrice"`
-	ExpiryDate    time.Time  `json:"expiryDate"`
-	ContractSize  int        `json:"contractSize"`
-	LastPrice     *int64     `json:"lastPrice"`
-	ClosePrice    *int64     `json:"closePrice"`
-	BestBid       *int64     `json:"bestBid"`
-	BestAsk       *int64     `json:"bestAsk"`
-	Volume        *int64     `json:"volume"`
-	OpenInterest  *int64     `json:"openInterest"`
-	QuoteTS       *time.Time `json:"quoteTs"`
+	ContractID     int        `json:"contractId"`
+	Symbol         string     `json:"symbol"`
+	UnderlyingID   int        `json:"underlyingId"`
+	UnderlyingSym  string     `json:"underlyingSymbol"`
+	UnderlyingKind string     `json:"underlyingKind"`
+	OptionType     string     `json:"optionType"`
+	StrikePrice    int64      `json:"strikePrice"`
+	ExpiryDate     time.Time  `json:"expiryDate"`
+	ContractSize   int        `json:"contractSize"`
+	LastPrice      *int64     `json:"lastPrice"`
+	ClosePrice     *int64     `json:"closePrice"`
+	BestBid        *int64     `json:"bestBid"`
+	BestAsk        *int64     `json:"bestAsk"`
+	Volume         *int64     `json:"volume"`
+	OpenInterest   *int64     `json:"openInterest"`
+	QuoteTS        *time.Time `json:"quoteTs"`
 }
 
 // ChainFilter narrows a chain query. Zero-value fields are ignored.
 type ChainFilter struct {
 	UnderlyingSymbol string
+	UnderlyingKind   string
 	OptionType       string
 	Limit            int
 }
@@ -214,7 +229,7 @@ func (r *Repository) ListOptionChain(ctx context.Context, f ChainFilter) ([]Opti
 		limit = 1000
 	}
 	const q = `
-		SELECT c.id, c.symbol, u.id, u.symbol, c.option_type, c.strike_price,
+		SELECT c.id, c.symbol, u.id, u.symbol, u.kind, c.option_type, c.strike_price,
 		       c.expiry_date, c.contract_size,
 		       q.last_price, q.close_price, q.best_bid, q.best_ask,
 		       q.volume, q.open_interest, q.ts
@@ -223,9 +238,10 @@ func (r *Repository) ListOptionChain(ctx context.Context, f ChainFilter) ([]Opti
 		LEFT JOIN option_quotes_latest q ON q.contract_id = c.id
 		WHERE ($1 = '' OR u.symbol = $1)
 		  AND ($2 = '' OR c.option_type::text = $2)
+		  AND ($3 = '' OR u.kind::text = $3)
 		ORDER BY u.symbol, c.expiry_date, c.strike_price, c.option_type
-		LIMIT $3`
-	rows, err := r.db.Query(ctx, q, f.UnderlyingSymbol, f.OptionType, limit)
+		LIMIT $4`
+	rows, err := r.db.Query(ctx, q, f.UnderlyingSymbol, f.OptionType, f.UnderlyingKind, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +251,7 @@ func (r *Repository) ListOptionChain(ctx context.Context, f ChainFilter) ([]Opti
 	for rows.Next() {
 		var o OptionChainRow
 		if err := rows.Scan(
-			&o.ContractID, &o.Symbol, &o.UnderlyingID, &o.UnderlyingSym, &o.OptionType,
+			&o.ContractID, &o.Symbol, &o.UnderlyingID, &o.UnderlyingSym, &o.UnderlyingKind, &o.OptionType,
 			&o.StrikePrice, &o.ExpiryDate, &o.ContractSize,
 			&o.LastPrice, &o.ClosePrice, &o.BestBid, &o.BestAsk,
 			&o.Volume, &o.OpenInterest, &o.QuoteTS,

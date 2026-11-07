@@ -120,8 +120,9 @@ func (c *Collector) CollectOptionChain(ctx context.Context) (CollectResult, erro
 }
 
 // ensureUnderlying returns the id of the underlying with insCode, creating it if
-// necessary. It tries to enrich identity (symbol/ISIN/name) via InstrumentInfo,
-// falling back to the symbol seen in the option chain if that lookup fails.
+// necessary. It tries to enrich identity (symbol/ISIN/name/sector) via
+// InstrumentInfo, falling back to the symbol seen in the option chain if that
+// lookup fails. The sector drives the stock/fund/index/other classification.
 func (c *Collector) ensureUnderlying(ctx context.Context, insCode, fallbackSymbol string) (int, error) {
 	if id, ok, err := c.repo.GetUnderlyingIDByInsCode(ctx, insCode); err != nil {
 		return 0, err
@@ -139,7 +140,9 @@ func (c *Collector) ensureUnderlying(ctx context.Context, insCode, fallbackSymbo
 		c.log.Warn("instrument info lookup failed; using chain symbol",
 			"insCode", insCode, "err", err)
 	}
-	return c.repo.UpsertUnderlying(ctx, info)
+	// Classification needs sector info; without it classifyUnderlying yields
+	// KindOther, which UpsertUnderlying will not use to overwrite a known kind.
+	return c.repo.UpsertUnderlying(ctx, info, classifyUnderlying(info))
 }
 
 // BackfillDaily fetches the end-of-day history for an underlying instrument and

@@ -55,6 +55,7 @@ func (h *Handler) listOptions(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
 	rows, err := h.repo.ListOptionChain(c.Request.Context(), ChainFilter{
 		UnderlyingSymbol: c.Query("underlying"),
+		UnderlyingKind:   c.Query("underlyingKind"),
 		OptionType:       c.Query("type"),
 		Limit:            limit,
 	})
@@ -65,9 +66,9 @@ func (h *Handler) listOptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"count": len(rows), "items": rows})
 }
 
-// listUnderlyings returns all known underlyings.
+// listUnderlyings returns known underlyings, optionally filtered by ?kind=.
 func (h *Handler) listUnderlyings(c *gin.Context) {
-	rows, err := h.repo.ListUnderlyings(c.Request.Context())
+	rows, err := h.repo.ListUnderlyings(c.Request.Context(), c.Query("kind"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -231,6 +231,10 @@ type instrumentInfoResponse struct {
 		Name         string  `json:"lVal30"`
 		ISIN         string  `json:"cIsin"`
 		ContractSize flexInt `json:"contractSize"`
+		Sector       struct {
+			CSecVal string `json:"cSecVal"`
+			LSecVal string `json:"lSecVal"`
+		} `json:"sector"`
 	} `json:"instrumentInfo"`
 }
 
@@ -255,6 +259,8 @@ func (c *Client) InstrumentInfo(ctx context.Context, insCode string) (*datasourc
 		Name:         strings.TrimSpace(ii.Name),
 		ISIN:         strings.TrimSpace(ii.ISIN),
 		ContractSize: int(ii.ContractSize),
+		SectorCode:   strings.TrimSpace(ii.Sector.CSecVal),
+		SectorName:   strings.TrimSpace(ii.Sector.LSecVal),
 	}, nil
 }
 

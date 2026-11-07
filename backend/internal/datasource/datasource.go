@@ -34,6 +34,8 @@ type InstrumentInfo struct {
 	Name         string // full descriptive name
 	ISIN         string // ISIN code, may be empty if the provider omits it
 	ContractSize int    // units per contract (0 for a plain underlying)
+	SectorCode   string // market sector code (TSETMC cSecVal), used to classify kind
+	SectorName   string // human-readable sector name (TSETMC lSecVal)
 }
 
 // DailyPrice is one end-of-day OHLC record for an instrument.

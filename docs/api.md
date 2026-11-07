@@ -55,8 +55,24 @@ behind the same interface so they can be fleshed out later without wider changes
 | `GET`  | `/health` | Liveness + DB ping |
 | `POST` | `/market/collect/options` | Run one option-chain collection pass; returns counts (`rows`, `underlyings`, `contracts`, `quotes`, `errors`) |
 | `POST` | `/market/collect/daily/:insCode?adjusted=true` | Backfill an underlying's daily history |
-| `GET`  | `/market/options?underlying=<sym>&type=call\|put&limit=<n>` | Stored contracts joined with their latest quote |
-| `GET`  | `/market/underlyings` | All known underlyings |
+| `GET`  | `/market/options?underlying=<sym>&type=call\|put&underlyingKind=stock\|fund\|index\|other&limit=<n>` | Stored contracts joined with their latest quote |
+| `GET`  | `/market/underlyings?kind=stock\|fund\|index\|other` | Known underlyings (optionally filtered by kind) |
+
+### Underlying classification (اختیار سهام vs. others)
+
+Each underlying is tagged with a `kind` so stock options (اختیار سهام) can be
+separated from fund/ETF and index options. The kind is derived in
+`internal/market/classify.go` from the instrument's market sector (`cSecVal`
+from `GetInstrumentInfo`):
+
+| kind | meaning | rule |
+|---|---|---|
+| `fund`  | option on a tradable fund/ETF unit | sector `68` ("صندوق سرمايه گذاري قابل معامله") or sector name contains "صندوق" |
+| `stock` | option on a single company's shares | any other non-empty industry sector |
+| `index` | cash-settled option on an index | reserved; none listed on TSETMC today |
+| `other` | unclassified | no sector info (e.g. identity lookup failed) |
+
+A re-collection never downgrades a known kind back to `other`.
 
 ## Configuration (env)
 
