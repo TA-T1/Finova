@@ -10,14 +10,26 @@ import (
 	"Finova/internal/datasource"
 )
 
+// numString turns a raw JSON scalar into a clean numeric string: quotes are
+// removed, Persian/Arabic digits become ASCII and thousands separators go. An
+// empty result means "missing" (empty string or null).
+func numString(b []byte) string {
+	s := strings.Trim(strings.TrimSpace(string(b)), `"`)
+	if s == "null" {
+		return ""
+	}
+	return strings.ReplaceAll(datasource.NormalizeText(s), ",", "")
+}
+
 // flexInt decodes a JSON number (integer or float) or a numeric string into an
 // int64. TSETMC is mostly consistent but occasionally wraps numbers in strings
-// or returns settlement values with a trailing ".00"; this absorbs both.
+// or returns settlement values with a trailing ".00"; this absorbs both. A
+// missing, null or empty value is 0.
 type flexInt int64
 
 func (f *flexInt) UnmarshalJSON(b []byte) error {
-	s := strings.Trim(string(b), `"`)
-	if s == "" || s == "null" {
+	s := numString(b)
+	if s == "" {
 		*f = 0
 		return nil
 	}
@@ -34,6 +46,23 @@ func (f *flexInt) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	*f = flexInt(v)
+	return nil
+}
+
+// flexFloat is flexInt for values that may be fractional (e.g. traded value).
+type flexFloat float64
+
+func (f *flexFloat) UnmarshalJSON(b []byte) error {
+	s := numString(b)
+	if s == "" {
+		*f = 0
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return err
+	}
+	*f = flexFloat(v)
 	return nil
 }
 
@@ -77,34 +106,36 @@ type optionWatchRow struct {
 	UAYesterday flexInt `json:"priceYesterday_UA"`
 
 	// Call side.
-	CInsCode   string  `json:"insCode_C"`
-	CSymbol    string  `json:"lVal18AFC_C"`
-	CName      string  `json:"lVal30_C"`
-	CLast      flexInt `json:"pDrCotVal_C"`
-	CClosing   flexInt `json:"pClosing_C"`
-	CYesterday flexInt `json:"priceYesterday_C"`
-	COP        flexInt `json:"oP_C"`
-	CVolume    flexInt `json:"qTotTran5J_C"`
-	CValue     flexInt `json:"qTotCap_C"`
-	CBidPrice  flexInt `json:"pMeDem_C"`
-	CBidVol    flexInt `json:"qTitMeDem_C"`
-	CAskPrice  flexInt `json:"pMeOf_C"`
-	CAskVol    flexInt `json:"qTitMeOf_C"`
+	CInsCode   string    `json:"insCode_C"`
+	CSymbol    string    `json:"lVal18AFC_C"`
+	CName      string    `json:"lVal30_C"`
+	CLast      flexInt   `json:"pDrCotVal_C"`
+	CClosing   flexInt   `json:"pClosing_C"`
+	CYesterday flexInt   `json:"priceYesterday_C"`
+	COP        flexInt   `json:"oP_C"`
+	CVolume    flexInt   `json:"qTotTran5J_C"`
+	CValue     flexFloat `json:"qTotCap_C"`
+	CBidPrice  flexInt   `json:"pMeDem_C"`
+	CBidVol    flexInt   `json:"qTitMeDem_C"`
+	CAskPrice  flexInt   `json:"pMeOf_C"`
+	CAskVol    flexInt   `json:"qTitMeOf_C"`
+	CTrades    flexInt   `json:"zTotTran_C"`
 
 	// Put side.
-	PInsCode   string  `json:"insCode_P"`
-	PSymbol    string  `json:"lVal18AFC_P"`
-	PName      string  `json:"lVal30_P"`
-	PLast      flexInt `json:"pDrCotVal_P"`
-	PClosing   flexInt `json:"pClosing_P"`
-	PYesterday flexInt `json:"priceYesterday_P"`
-	POP        flexInt `json:"oP_P"`
-	PVolume    flexInt `json:"qTotTran5J_P"`
-	PValue     flexInt `json:"qTotCap_P"`
-	PBidPrice  flexInt `json:"pMeDem_P"`
-	PBidVol    flexInt `json:"qTitMeDem_P"`
-	PAskPrice  flexInt `json:"pMeOf_P"`
-	PAskVol    flexInt `json:"qTitMeOf_P"`
+	PInsCode   string    `json:"insCode_P"`
+	PSymbol    string    `json:"lVal18AFC_P"`
+	PName      string    `json:"lVal30_P"`
+	PLast      flexInt   `json:"pDrCotVal_P"`
+	PClosing   flexInt   `json:"pClosing_P"`
+	PYesterday flexInt   `json:"priceYesterday_P"`
+	POP        flexInt   `json:"oP_P"`
+	PVolume    flexInt   `json:"qTotTran5J_P"`
+	PValue     flexFloat `json:"qTotCap_P"`
+	PBidPrice  flexInt   `json:"pMeDem_P"`
+	PBidVol    flexInt   `json:"qTitMeDem_P"`
+	PAskPrice  flexInt   `json:"pMeOf_P"`
+	PAskVol    flexInt   `json:"qTitMeOf_P"`
+	PTrades    flexInt   `json:"zTotTran_P"`
 }
 
 // OptionMarketWatch implements datasource.Source.

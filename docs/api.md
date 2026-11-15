@@ -83,3 +83,104 @@ A re-collection never downgrades a known kind back to `other`.
 | `COLLECT_INTERVAL` | *(empty = off)* | enable background collector, e.g. `60s`, `2m` |
 
 > The server must run from a network that can reach `cdn.tsetmc.com` (Iran).
+
+## Market snapshot adapter (`MarketSource`)
+
+`internal/datasource/market.go` defines the snapshot API the collection
+service should use: `FetchMarket(ctx) (*MarketSnapshot, error)` returns every
+active option contract (with its latest quote) plus quotes for every
+underlying that has options, in one call.
+
+Field names follow the brief in `docs/01-crawl-adapter.md`; `docs/api.md` had no
+contract for these structs. Prices are `float64` here (the older
+`OptionRow`/`OptionLeg` types use `int64`); `Expiry` is a Gregorian date at
+00:00 `Asia/Tehran`; missing numbers are `0`; `LastTradeTime` is `nil` when
+unknown.
+
+### FakeSource (offline development)
+
+```go
+src, err := datasource.NewFake("testdata/market_sample.json") // implements MarketSource
+snap, err := src.FetchMarket(ctx)
+src.SetError(errors.New("boom")) // make later calls fail, to test error paths
+```
+
+`backend/testdata/market_sample.json` (fixture for `FakeSource`): the 27 underlyings are real latest quotes
+from `data-pipeline/output/underlyings_daily.csv` (2026-11-07). The 36 contracts
+are **synthetic** (`source_id` starts with `SYNTH`): they exist only to give
+the right shape and are not real market prices.
+
+### Live implementation: `tsetmc.Client.FetchMarket`
+
+One request, `GET /Instrument/GetInstrumentOptionMarketWatch/0`, is one
+snapshot. Each response row holds a call, a put and the underlying's quote;
+the adapter splits it into `OptionContract`s and de-duplicated
+`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on
+2026-11-15).
+
+| Our field | TSETMC field |
+|---|---|
+| `SourceID` | `insCode_C` / `insCode_P` |
+| `Symbol` | `lVal18AFC_C` / `_P` |
+| `UnderlyingSymbol` | `lval30_UA` (fallback: parsed from `lVal30_*`) |
+| `Strike` | `strikePrice` (fallback: name) |
+| `Expiry` | `endDate` (Gregorian `YYYYMMDD`; fallback: Jalali date in the name) |
+| `ContractSize` | `contractSize` |
+| `LastPrice` / `ClosePrice` / `PrevClose` | `pDrCotVal` / `pClosing` / `priceYesterday` |
+| `BidPrice`, `BidVolume` / `AskPrice`, `AskVolume` | `pMeDem`, `qTitMeDem` / `pMeOf`, `qTitMeOf` |
+| `Volume` / `Value` / `TradeCount` / `OpenInterest` | `qTotTran5J` / `qTotCap` / `zTotTran` / `oP` |
+| underlying `SourceID`, `LastPrice`, `ClosePrice`, `PrevClose` | `uaInsCode`, `pDrCotVal_UA`, `pClosing_UA`, `priceYesterday_UA` |
+
+Limits of this endpoint (left at their zero values):
+- `LastTradeTime` is always `nil` (not provided).
+- Underlying `Volume` is `0` and `Name` equals `Symbol` (only the short symbol is provided).
+  Full names are available from `GetInstrumentInfo/{insCode}`, but that would be one extra request per underlying.
+
+Behaviour:
+- **Normalization:** Arabic `ي`/`ك` become `ی`/`ک`, Persian and Arabic digits become ASCII,
+  and zero-width characters and surrounding whitespace are removed.
+- **Dates:** `Expiry` is a Gregorian date at 00:00 `Asia/Tehran`. Jalali dates are converted with `go-persian-calendar`.
+- **Missing values:** a missing, `null` or empty number is `0`.
+- **Bad rows:** a malformed row is skipped with a `slog` warning.
+  An empty or unrecognised response, or one with no valid contract, returns an error.
+
+Reliability, configured by env vars (see `backend/.env.example`):
+
+| Var | Default | Meaning |
+|---|---|---|
+| `TSETMC_TIMEOUT` | `10s` | timeout of each HTTP attempt |
+| `TSETMC_MAX_ATTEMPTS` | `3` | total attempts; retries on network errors, timeouts, 5xx and 429 with exponential backoff (500ms, 1s, ...); no retry on other 4xx |
+| `TSETMC_RATE_LIMIT` | `2` | requests per second (`0` = unlimited). TSETMC documents no limit, so this is a polite default |
+
+`go run ./cmd/fetchdemo` (from `backend/`) calls the real source once and prints the counts, 5 sample contracts and the call duration.
+`backend/scripts/capture_tsetmc_samples.sh` re-captures the real samples into `backend/testdata/`.
+Tests run offline against `httptest.Server` serving `testdata/tsetmc_option_watch.json`.
+
+### Historical option prices
+
+TSETMC's `GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/{adjusted}` is keyed by instrument code,
+and `Client.DailyPrices` already accepts any code, so it should also work with an option contract's `insCode`.
+**This has not been verified against a real option `insCode`.** It matters for the Sprint 3 decision, so check it first.
+The chain endpoint above returns only the current day.
+
+### Known limitations and future work
+
+The TSETMC option-chain endpoint does not provide these fields. We chose to leave them
+unfilled for now (decision: 2026-11-15), because nothing downstream needs them yet.
+
+| Field | Value today | Guidance for callers |
+|---|---|---|
+| `OptionContract.LastTradeTime` | always `nil` | Timestamp quotes with `MarketSnapshot.FetchedAt`. The real value would need one request per contract (about 1,800 per snapshot), which does not fit a 30-60s cadence. |
+| `UnderlyingQuote.Volume` | always `0`, meaning **unknown** | Do not store it. If you must write the column, write `NULL` when it is `0`. |
+| `UnderlyingQuote.Name` | equals `Symbol` | Do not overwrite a stored full name with it. The collector already gets full names from `GetInstrumentInfo`. |
+
+**If underlying volume or full names are needed later:** TSETMC has a market-wide watch endpoint
+that returns volume (`qTotTran5J`) and full name (`lVal30`) for every instrument in a single request.
+The plan would be:
+1. Capture a real sample of that endpoint (extend `backend/scripts/capture_tsetmc_samples.sh`).
+   Its path and shape are **unverified**, because it could not be reached while building this adapter.
+2. Inside `FetchMarket`, make this one extra request and merge the matching instruments by `uaInsCode`.
+   If it fails, return the snapshot without those fields and log a warning. Do not fail the snapshot.
+3. Add a test with the captured sample, and remove the limitation above.
+
+This costs about one extra request per snapshot. The existing rate limit already covers it.

@@ -32,6 +32,9 @@ func main() {
 	src := tsetmc.New(
 		tsetmc.WithBaseURL(cfg.TSETMCBaseURL),
 		tsetmc.WithUserAgent(cfg.TSETMCUserAgent),
+		tsetmc.WithTimeout(cfg.TSETMCTimeout),
+		tsetmc.WithMaxAttempts(cfg.TSETMCMaxAttempts),
+		tsetmc.WithRateLimit(cfg.TSETMCRateLimit),
 	)
 	repo := market.NewRepository(db)
 	collector := market.NewCollector(src, repo, slog.Default())
