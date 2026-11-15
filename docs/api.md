@@ -184,3 +184,55 @@ The plan would be:
 3. Add a test with the captured sample, and remove the limitation above.
 
 This costs about one extra request per snapshot. The existing rate limit already covers it.
+
+## Daily end-of-day snapshot (`cmd/snapshot`, `internal/snapshot`)
+
+`quote_snapshots` keeps one row per contract per trading day (migration
+`000007_quote_snapshots`; **new migration, the backend team should review it**).
+`option_quotes` holds intraday ticks only, so this table is our real price history for the backtest.
+It may be the only history we get (see "Historical option prices" above).
+
+| Column | Notes |
+|---|---|
+| `trade_date` | Tehran calendar date of the trading day. With `contract_symbol` it is the primary key, the upsert target. |
+| `contract_symbol`, `underlying_symbol`, `option_type` (`call`/`put`), `strike`, `expiry` | Contract identity. |
+| `close_price`, `last_price`, `bid_price`, `ask_price` | `bid_price` and `ask_price` are as of `captured_at`. |
+| `volume`, `value`, `trade_count`, `open_interest` | `0` means the source had no figure or nothing traded. |
+| `underlying_price` | The underlying's last price at `captured_at`, joined by underlying symbol. **`NULL` when unknown** (no matching underlying, or a last price of 0). Treat NULL as "do not use this row for pricing". |
+| `captured_at` | The adapter's `FetchedAt`. |
+
+Money columns are `BIGINT` rials, like the rest of the schema.
+
+```bash
+go run ./cmd/snapshot run      # one snapshot now, then exit
+go run ./cmd/snapshot daemon   # a snapshot every day at SNAPSHOT_TIME, until SIGINT/SIGTERM
+```
+
+| Var | Default | Meaning |
+|---|---|---|
+| `SNAPSHOT_TIME` | `13:00` | daily run time, `HH:MM` in Asia/Tehran (the market closes at about 12:30) |
+| `SNAPSHOT_TRIES` | `3` | total attempts per day if a run fails |
+| `SNAPSHOT_RETRY_DELAY` | `5m` | wait between attempts. After the last failed attempt it logs the error and waits for the next day. |
+
+`snapshot.Run(ctx, src, db)` fetches the market once. It skips non-trading days, joins each contract with its
+underlying price, and upserts all rows (about 1,800, about 100 ms) in **one transaction** with one bulk
+statement. A second run on the same day overwrites the first run's values and creates no duplicates.
+It returns the number of rows written; skipping a non-trading day returns 0, logs `no trading today`, and is not an error.
+
+### How a non-trading day is detected
+
+The spec says to skip the day when no contract has a last trade time on today's Tehran date.
+TSETMC provides no last trade time (see "Known limitations"), so that rule alone would skip every day.
+The checks run in this order:
+1. **A contract has `LastTradeTime`** (another source, or the fake): trading happened iff one of them falls on today's Tehran date.
+2. **Otherwise, compare with the latest earlier snapshot** in `quote_snapshots`. On a closed day TSETMC keeps serving the last trading
+   day's final numbers, so if no traded contract has a different volume, trade count, last price or close price, the day is skipped.
+   No holiday calendar is needed.
+3. **No earlier snapshot** (the first ever run): Thursday and Friday are skipped, and so is a day on which no contract has volume.
+
+Caveats:
+- **Mid-session runs:** a manual `snapshot run` taken during the session stores partial figures. The 13:00 run overwrites them the same day.
+  But if the next day is a holiday, the final figures then differ from that partial row, and a duplicate row can be written for the holiday.
+  Take manual snapshots after the close.
+- **Missed days:** the daemon only schedules the next 13:00. If it is down at 13:00, that day is missed, and backfilling is out of scope (Sprint 3).
+  After a restart, run `snapshot run` by hand.
