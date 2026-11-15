@@ -44,6 +44,7 @@ type Client struct {
 	origin      string
 	http        *http.Client
 	timeout     time.Duration
+	timeoutSet  bool // WithTimeout was used
 	maxAttempts int
 	backoff     time.Duration
 	limiter     *rate.Limiter // nil = unlimited
@@ -59,12 +60,16 @@ func WithBaseURL(u string) Option { return func(c *Client) { c.baseURL = u } }
 // WithUserAgent overrides the User-Agent header sent to TSETMC.
 func WithUserAgent(ua string) Option { return func(c *Client) { c.userAgent = ua } }
 
-// WithHTTPClient supplies a custom *http.Client (e.g. with a proxy).
+// WithHTTPClient supplies a custom *http.Client (e.g. with a proxy). If that
+// client has its own Timeout and WithTimeout is not used, the per-attempt
+// timeout follows it, as before the retry layer existed.
 func WithHTTPClient(h *http.Client) Option { return func(c *Client) { c.http = h } }
 
 // WithTimeout sets the timeout of each single HTTP attempt (default 10s).
 // Zero or negative keeps the default.
-func WithTimeout(d time.Duration) Option { return func(c *Client) { c.timeout = d } }
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) { c.timeout, c.timeoutSet = d, d > 0 }
+}
 
 // WithMaxAttempts sets the total number of attempts per request, including the
 // first one (default 3). Values below 1 keep the default.
@@ -117,6 +122,9 @@ func New(opts ...Option) *Client {
 	}
 	if c.timeout <= 0 {
 		c.timeout = defaultTimeout
+	}
+	if !c.timeoutSet && c.http.Timeout > 0 {
+		c.timeout = c.http.Timeout // a custom client's own timeout still applies
 	}
 	if c.maxAttempts < 1 {
 		c.maxAttempts = defaultMaxAttempts

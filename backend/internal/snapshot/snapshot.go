@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"Finova/internal/datasource"
+	"Finova/internal/source"
 )
 
 const dateLayout = "2006-01-02"
@@ -56,7 +57,7 @@ func WithLogger(l *slog.Logger) Option { return func(c *config) { c.log = l } }
 // in one transaction. It returns the number of rows written (0 on a
 // non-trading day, which is not an error). Running twice on the same day
 // overwrites instead of duplicating.
-func Run(ctx context.Context, src datasource.MarketSource, db *pgxpool.Pool, opts ...Option) (int, error) {
+func Run(ctx context.Context, src source.Source, db *pgxpool.Pool, opts ...Option) (int, error) {
 	cfg := config{now: time.Now, log: slog.Default()}
 	for _, o := range opts {
 		o(&cfg)

@@ -3,7 +3,6 @@ package snapshot
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -45,21 +44,33 @@ func loadPrevious(ctx context.Context, q querier, tradeDate string) (*previousDa
 	return prev, nil
 }
 
-const upsertSQL = `
+// The rows are bulk-loaded with COPY into a temporary staging table and then
+// merged into quote_snapshots with one upsert, all inside one transaction. The
+// staging table is dropped on commit or rollback.
+const stageSQL = `
+CREATE TEMP TABLE snapshot_stage (
+	trade_date text, contract_symbol text, underlying_symbol text, option_type text,
+	strike bigint, expiry text, close_price bigint, last_price bigint, bid_price bigint,
+	ask_price bigint, volume bigint, value bigint, trade_count bigint,
+	open_interest bigint, underlying_price bigint, captured_at timestamptz
+) ON COMMIT DROP`
+
+var stageColumns = []string{
+	"trade_date", "contract_symbol", "underlying_symbol", "option_type",
+	"strike", "expiry", "close_price", "last_price", "bid_price",
+	"ask_price", "volume", "value", "trade_count",
+	"open_interest", "underlying_price", "captured_at",
+}
+
+const mergeSQL = `
 INSERT INTO quote_snapshots (
 	trade_date, contract_symbol, underlying_symbol, option_type, strike, expiry,
 	close_price, last_price, bid_price, ask_price, volume, value, trade_count,
 	open_interest, underlying_price, captured_at)
-SELECT t.trade_date::date, t.contract_symbol, t.underlying_symbol, t.option_type, t.strike, t.expiry::date,
-	t.close_price, t.last_price, t.bid_price, t.ask_price, t.volume, t.value, t.trade_count,
-	t.open_interest, t.underlying_price, t.captured_at::timestamptz
-FROM unnest(
-	$1::text[], $2::text[], $3::text[], $4::text[], $5::bigint[], $6::text[],
-	$7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::bigint[], $12::bigint[], $13::bigint[],
-	$14::bigint[], $15::bigint[], $16::timestamptz[]
-) AS t(trade_date, contract_symbol, underlying_symbol, option_type, strike, expiry,
+SELECT trade_date::date, contract_symbol, underlying_symbol, option_type, strike, expiry::date,
 	close_price, last_price, bid_price, ask_price, volume, value, trade_count,
-	open_interest, underlying_price, captured_at)
+	open_interest, underlying_price, captured_at
+FROM snapshot_stage
 ON CONFLICT (trade_date, contract_symbol) DO UPDATE SET
 	underlying_symbol = EXCLUDED.underlying_symbol,
 	option_type       = EXCLUDED.option_type,
@@ -76,34 +87,36 @@ ON CONFLICT (trade_date, contract_symbol) DO UPDATE SET
 	underlying_price  = EXCLUDED.underlying_price,
 	captured_at       = EXCLUDED.captured_at`
 
-// upsert writes all rows in one transaction with a single bulk statement
-// (unnest over column arrays: one round trip for ~2,000 rows).
+// upsert writes all rows in one transaction (COPY + one merge statement) and
+// returns the number of rows inserted or updated.
 func upsert(ctx context.Context, db *pgxpool.Pool, rows []Row) (int, error) {
-	n := len(rows)
-	var (
-		tradeDate, symbol, under, typ, expiry = make([]string, n), make([]string, n), make([]string, n), make([]string, n), make([]string, n)
-		strike, closeP, lastP, bid, ask       = make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n)
-		volume, value, trades, oi             = make([]int64, n), make([]int64, n), make([]int64, n), make([]int64, n)
-		underPrice                            = make([]*int64, n)
-		captured                              = make([]time.Time, n)
-	)
-	for i, r := range rows {
-		tradeDate[i], symbol[i], under[i], typ[i], expiry[i] = r.TradeDate, r.ContractSymbol, r.UnderlyingSymbol, r.OptionType, r.Expiry
-		strike[i], closeP[i], lastP[i], bid[i], ask[i] = r.Strike, r.ClosePrice, r.LastPrice, r.BidPrice, r.AskPrice
-		volume[i], value[i], trades[i], oi[i] = r.Volume, r.Value, r.TradeCount, r.OpenInterest
-		underPrice[i], captured[i] = r.UnderlyingPrice, r.CapturedAt
-	}
-
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("snapshot: begin transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) // no-op after a successful commit
 
-	tag, err := tx.Exec(ctx, upsertSQL, tradeDate, symbol, under, typ, strike, expiry,
-		closeP, lastP, bid, ask, volume, value, trades, oi, underPrice, captured)
+	if _, err := tx.Exec(ctx, stageSQL); err != nil {
+		return 0, fmt.Errorf("snapshot: create staging table: %w", err)
+	}
+	_, err = tx.CopyFrom(ctx, pgx.Identifier{"snapshot_stage"}, stageColumns,
+		pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
+			r := rows[i]
+			var under any // NULL when the underlying price is unknown
+			if r.UnderlyingPrice != nil {
+				under = *r.UnderlyingPrice
+			}
+			return []any{r.TradeDate, r.ContractSymbol, r.UnderlyingSymbol, r.OptionType,
+				r.Strike, r.Expiry, r.ClosePrice, r.LastPrice, r.BidPrice,
+				r.AskPrice, r.Volume, r.Value, r.TradeCount,
+				r.OpenInterest, under, r.CapturedAt}, nil
+		}))
 	if err != nil {
-		return 0, fmt.Errorf("snapshot: upsert %d rows: %w", n, err)
+		return 0, fmt.Errorf("snapshot: copy %d rows: %w", len(rows), err)
+	}
+	tag, err := tx.Exec(ctx, mergeSQL)
+	if err != nil {
+		return 0, fmt.Errorf("snapshot: upsert %d rows: %w", len(rows), err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("snapshot: commit: %w", err)

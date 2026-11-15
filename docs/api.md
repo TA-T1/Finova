@@ -97,6 +97,12 @@ contract for these structs. Prices are `float64` here (the older
 00:00 `Asia/Tehran`; missing numbers are `0`; `LastTradeTime` is `nil` when
 unknown.
 
+**Names.** The brief calls these `internal/source`, `source.Source`, `source.NewFake`... They are available under exactly those names:
+`internal/source` is a thin package of type aliases over `internal/datasource` (`source.Source` *is* `datasource.MarketSource`), so the two names are interchangeable.
+Nothing was renamed or removed: `datasource.Source`, `OptionRow`, the `tsetmc` client and the collector that use them are unchanged.
+New code (the snapshot, the collection service) should import `internal/source`.
+Only `cmd/...` may build the TSETMC client; a test (`internal/source`) fails if a library package imports it or mentions a TSETMC host.
+
 ### FakeSource (offline development)
 
 ```go
@@ -199,7 +205,8 @@ What this means for the Sprint 3 backfill:
 | Item | Status |
 |---|---|
 | `LastTradeTime`, underlying `Name` and `Volume` | **Filled by the enrichment requests** (decision 2026-11-15: first left unfilled, then fixed after finding the endpoints in the browser). They are unset only when those requests fail, or for a contract that did not trade (`nil`), or an underlying missing from the market watch (`Name` = `Symbol`, `Volume` = `0` meaning *unknown*). Callers should not store `Volume` = 0 as a real value. |
-| Trade date on a holiday | **Unverified.** The enrichment takes the date from `GetClosingPriceInfo.dEven`, and it was only observed on a trading day (2026-11-15). We expect it to stay at the last session's date on Thursday, Friday and holidays, but nobody has checked yet. The snapshot has a guard for this case (see "How a non-trading day is detected"). Check the first closed weekday after deployment. |
+| Existing callers of the TSETMC client | The retry/timeout/rate-limit layer applies to the **existing** methods too (`OptionMarketWatch`, `DailyPrices`, `InstrumentInfo`), so the collector gets it for free. New defaults: 10 s per request (was 30 s), 3 attempts (was 1), 2 requests per second (was unlimited). A custom `http.Client` passed with `WithHTTPClient` keeps its own `Timeout`. To restore the old behaviour set `TSETMC_TIMEOUT=30s`, `TSETMC_MAX_ATTEMPTS=1` and `TSETMC_RATE_LIMIT=0`. |
+| Trade date on a holiday | **Unverified.** The enrichment takes the date from `GetClosingPriceInfo.dEven`, and it was only observed on a trading day (2026-11-15). We expect it to stay at the last session's date on Thursday, Friday and holidays, but nobody has checked yet. The snapshot has a guard for this case (see "How a non-trading day is detected"). Run `bash backend/scripts/verify_live.sh` on a Thursday or Friday (the next one is 2026-11-19): it fails if `dEven` equals today on a closed day. On 2026-11-15 (a trading day) it passed its other checks against the live source. |
 | Cost | Each snapshot now downloads about 3.7 MB more (the market watch). At a 30-60 s polling cadence, consider calling it less often or caching the names. |
 | Names of contracts' underlyings not in the market watch | Fall back to the symbol. The collector gets full names from `GetInstrumentInfo` when it creates an underlying. |
 | Real samples | `backend/testdata/tsetmc_market_watch.json` is the real market watch, **trimmed** to the instruments in the option chain (1,458 rows) with the best-limits ladder (`blDs`) removed, to keep it at about 0.8 MB. `tsetmc_closing_price_info.json` is the closing info of اهرم. `capture_tsetmc_samples.sh` fetches the untrimmed originals. |
@@ -234,8 +241,9 @@ go run ./cmd/snapshot daemon   # a snapshot every day at SNAPSHOT_TIME, until SI
 | `SNAPSHOT_RETRY_DELAY` | `5m` | wait between attempts. After the last failed attempt it logs the error and waits for the next day. |
 
 `snapshot.Run(ctx, src, db)` fetches the market once. It skips non-trading days, joins each contract with its
-underlying price, and upserts all rows (about 1,800, about 100 ms) in **one transaction** with one bulk
-statement. A second run on the same day overwrites the first run's values and creates no duplicates.
+underlying price, and writes all rows (about 1,800) in **one transaction**: `COPY` into a temporary staging table, then one
+`INSERT ... ON CONFLICT (trade_date, contract_symbol) DO UPDATE`. A second run on the same day overwrites the first run's values and
+creates no duplicates. Against live TSETMC a run takes 3-5 s, almost all of it the three adapter requests (the market watch is 3.7 MB) at the default 2 requests per second.
 It returns the number of rows written; skipping a non-trading day returns 0, logs `no trading today`, and is not an error.
 
 ### How a non-trading day is detected

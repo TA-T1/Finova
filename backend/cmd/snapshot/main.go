@@ -21,6 +21,7 @@ import (
 	"Finova/internal/datasource"
 	"Finova/internal/datasource/tsetmc"
 	"Finova/internal/snapshot"
+	"Finova/internal/source"
 )
 
 func main() {
@@ -53,7 +54,7 @@ func run(mode string) error {
 	}
 	defer db.Close()
 
-	var src datasource.MarketSource = tsetmc.New(
+	var src source.Source = tsetmc.New(
 		tsetmc.WithBaseURL(cfg.TSETMCBaseURL),
 		tsetmc.WithUserAgent(cfg.TSETMCUserAgent),
 		tsetmc.WithTimeout(cfg.TSETMCTimeout),

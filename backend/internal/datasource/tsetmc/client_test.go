@@ -174,3 +174,16 @@ func TestSendsBrowserHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCustomHTTPClientTimeoutIsStillHonoured(t *testing.T) {
+	custom := &http.Client{Timeout: 45 * time.Second}
+	if got := New(WithHTTPClient(custom)).timeout; got != 45*time.Second {
+		t.Errorf("timeout = %v, want the custom client's 45s", got)
+	}
+	if got := New(WithHTTPClient(custom), WithTimeout(2*time.Second)).timeout; got != 2*time.Second {
+		t.Errorf("explicit WithTimeout should win, got %v", got)
+	}
+	if got := New().timeout; got != 10*time.Second {
+		t.Errorf("default timeout = %v, want 10s", got)
+	}
+}
