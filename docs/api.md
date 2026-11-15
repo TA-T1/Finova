@@ -162,3 +162,25 @@ TSETMC's `GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/{adjusted}` is ke
 and `Client.DailyPrices` already accepts any code, so it should also work with an option contract's `insCode`.
 **This has not been verified against a real option `insCode`.** It matters for the Sprint 3 decision, so check it first.
 The chain endpoint above returns only the current day.
+
+### Known limitations and future work
+
+The TSETMC option-chain endpoint does not provide these fields. We chose to leave them
+unfilled for now (decision: 2026-11-15), because nothing downstream needs them yet.
+
+| Field | Value today | Guidance for callers |
+|---|---|---|
+| `OptionContract.LastTradeTime` | always `nil` | Timestamp quotes with `MarketSnapshot.FetchedAt`. The real value would need one request per contract (about 1,800 per snapshot), which does not fit a 30-60s cadence. |
+| `UnderlyingQuote.Volume` | always `0`, meaning **unknown** | Do not store it. If you must write the column, write `NULL` when it is `0`. |
+| `UnderlyingQuote.Name` | equals `Symbol` | Do not overwrite a stored full name with it. The collector already gets full names from `GetInstrumentInfo`. |
+
+**If underlying volume or full names are needed later:** TSETMC has a market-wide watch endpoint
+that returns volume (`qTotTran5J`) and full name (`lVal30`) for every instrument in a single request.
+The plan would be:
+1. Capture a real sample of that endpoint (extend `backend/scripts/capture_tsetmc_samples.sh`).
+   Its path and shape are **unverified**, because it could not be reached while building this adapter.
+2. Inside `FetchMarket`, make this one extra request and merge the matching instruments by `uaInsCode`.
+   If it fails, return the snapshot without those fields and log a warning. Do not fail the snapshot.
+3. Add a test with the captured sample, and remove the limitation above.
+
+This costs about one extra request per snapshot. The existing rate limit already covers it.

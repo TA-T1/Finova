@@ -48,10 +48,16 @@ type OptionContract struct {
 	Value         float64    `json:"value"`
 	TradeCount    int64      `json:"trade_count"`
 	OpenInterest  int64      `json:"open_interest"`
-	LastTradeTime *time.Time `json:"last_trade_time"` // nil when unknown
+	LastTradeTime *time.Time `json:"last_trade_time"` // nil when unknown (always nil for TSETMC; use MarketSnapshot.FetchedAt)
 }
 
 // UnderlyingQuote is the latest quote of an underlying that has options.
+//
+// Known limitation of the TSETMC source: its option-chain endpoint gives only
+// the underlying's short symbol and its prices. So Name equals Symbol and
+// Volume is always 0, which means "unknown", not "no trading". Do not store
+// Volume, and do not overwrite a stored full name with Name. See "Known
+// limitations" in docs/api.md.
 type UnderlyingQuote struct {
 	SourceID   string  `json:"source_id"`
 	Symbol     string  `json:"symbol"`
