@@ -17,10 +17,23 @@ import (
 
 const realSample = "../../../testdata/tsetmc_option_watch.json"
 
-// serve returns a test server that answers every request with body.
+// serve returns a test server that answers the option-chain endpoint with
+// body and every other path with 404 (so enrichment is skipped).
 func serve(t *testing.T, body []byte) *httptest.Server {
 	t.Helper()
+	return serveRoutes(t, map[string][]byte{"/Instrument/GetInstrumentOptionMarketWatch/0": body})
+}
+
+// serveRoutes answers each path in routes with its body and everything else
+// with 404. It records the requested paths in the returned *[]string.
+func serveRoutes(t *testing.T, routes map[string][]byte) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := routes[r.URL.Path]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(body)
 	}))
@@ -315,6 +328,10 @@ func TestFetchMarketRetriesThenSucceeds(t *testing.T) {
 	body := chain(t, baseRow())
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/Instrument/GetInstrumentOptionMarketWatch/0" {
+			http.NotFound(w, r) // enrichment endpoints are not under test here
+			return
+		}
 		hits++
 		if hits == 1 {
 			http.Error(w, "boom", 500)
@@ -326,5 +343,159 @@ func TestFetchMarketRetriesThenSucceeds(t *testing.T) {
 	snap, err := newTestClient(srv).FetchMarket(context.Background())
 	if err != nil || hits != 2 || len(snap.Contracts) != 2 {
 		t.Fatalf("err=%v hits=%d snap=%+v", err, hits, snap)
+	}
+}
+
+func readFile(t *testing.T, path string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+const (
+	realWatch = "../../../testdata/tsetmc_market_watch.json"
+	realInfo  = "../../../testdata/tsetmc_closing_price_info.json"
+	// وتجارت: the most traded underlying in the real capture, so the one the
+	// adapter picks to read the trade date from.
+	refID = "63917421733088077"
+)
+
+func realRoutes(t *testing.T) map[string][]byte {
+	return map[string][]byte{
+		"/Instrument/GetInstrumentOptionMarketWatch/0": readFile(t, realSample),
+		"/ClosingPrice/GetMarketWatch":                 readFile(t, realWatch),
+		"/ClosingPrice/GetClosingPriceInfo/" + refID:   readFile(t, realInfo),
+	}
+}
+
+func TestEnrichmentFillsNamesVolumeAndTradeTimes(t *testing.T) {
+	srv := serveRoutes(t, realRoutes(t))
+	snap, err := newTestClient(srv).FetchMarket(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	under := map[string]datasource.UnderlyingQuote{}
+	for _, u := range snap.Underlyings {
+		under[u.Symbol] = u
+	}
+
+	// Real values from the captures: full name normalized, volume from the watch.
+	if u := under["اهرم"]; u.Name != "صندوق س سهامی کاریزما- اهرمی" || u.Volume != 356541417 {
+		t.Errorf("اهرم: %+v", u)
+	}
+	// وبصادر is absent from the market watch (halted): fallback values.
+	if u := under["وبصادر"]; u.Name != "وبصادر" || u.Volume != 0 {
+		t.Errorf("وبصادر should keep Name=Symbol and Volume=0, got %+v", u)
+	}
+
+	// Traded contract: trade date 2026-11-15 (from the closing info) + hEven 123001.
+	call := find(snap, "ضهرم8030")
+	want := time.Date(2026, 11, 15, 12, 30, 1, 0, datasource.Tehran)
+	if call.LastTradeTime == nil || !call.LastTradeTime.Equal(want) {
+		t.Fatalf("LastTradeTime = %v, want %v", call.LastTradeTime, want)
+	}
+
+	// Every traded contract has a time on that date; no untraded one has any.
+	withTime := 0
+	for _, c := range snap.Contracts {
+		if c.Volume > 0 {
+			if c.LastTradeTime == nil {
+				t.Fatalf("traded contract %s has no LastTradeTime", c.Symbol)
+			}
+			if d := c.LastTradeTime.In(datasource.Tehran).Format("2006-01-02"); d != "2026-11-15" {
+				t.Fatalf("%s trade date %s", c.Symbol, d)
+			}
+			// One real contract (ضموج844) reports 14:19:20, after the close
+			// (probably an exercise/settlement update), so only sanity-check.
+			if h := c.LastTradeTime.In(datasource.Tehran).Hour(); h < 9 || h > 23 {
+				t.Fatalf("%s trade hour %d is implausible", c.Symbol, h)
+			}
+			withTime++
+		} else if c.LastTradeTime != nil {
+			t.Fatalf("untraded contract %s has LastTradeTime %v", c.Symbol, c.LastTradeTime)
+		}
+	}
+	if withTime < 500 {
+		t.Errorf("only %d contracts got a trade time, expected most of the traded ones", withTime)
+	}
+}
+
+func TestEnrichmentRequestsTheMostTradedUnderlyingForTheDate(t *testing.T) {
+	var paths []string
+	routes := realRoutes(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if b, ok := routes[r.URL.Path]; ok {
+			w.Write(b)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	if _, err := newTestClient(srv).FetchMarket(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"/Instrument/GetInstrumentOptionMarketWatch/0",
+		"/ClosingPrice/GetMarketWatch",
+		"/ClosingPrice/GetClosingPriceInfo/" + refID,
+	}
+	if strings.Join(paths, " ") != strings.Join(want, " ") {
+		t.Errorf("requests = %v, want %v", paths, want)
+	}
+}
+
+func TestEnrichmentFailureStillReturnsTheChain(t *testing.T) {
+	for name, drop := range map[string]string{
+		"market watch down": "/ClosingPrice/GetMarketWatch",
+		"closing info down": "/ClosingPrice/GetClosingPriceInfo/" + refID,
+	} {
+		routes := realRoutes(t)
+		delete(routes, drop)
+		var logs bytes.Buffer
+		srv := serveRoutes(t, routes)
+		snap, err := newTestClient(srv, WithLogger(slog.New(slog.NewTextHandler(&logs, nil)))).FetchMarket(context.Background())
+		if err != nil || len(snap.Contracts) != 1800 || len(snap.Underlyings) != 28 {
+			t.Fatalf("%s: err=%v snapshot=%v", name, err, snap)
+		}
+		if !strings.Contains(logs.String(), "enrichment failed") {
+			t.Errorf("%s: no warning logged:\n%s", name, logs.String())
+		}
+		for _, c := range snap.Contracts {
+			if c.LastTradeTime != nil {
+				t.Fatalf("%s: unexpected LastTradeTime on %s", name, c.Symbol)
+			}
+		}
+	}
+	// With only the closing info down, names and volume still come from the watch.
+	routes := realRoutes(t)
+	delete(routes, "/ClosingPrice/GetClosingPriceInfo/"+refID)
+	snap, _ := newTestClient(serveRoutes(t, routes), WithLogger(quietLogger())).FetchMarket(context.Background())
+	for _, u := range snap.Underlyings {
+		if u.Symbol == "اهرم" && u.Volume != 356541417 {
+			t.Errorf("volume lost when only the closing info failed: %+v", u)
+		}
+	}
+}
+
+func TestTimeOnDate(t *testing.T) {
+	d := time.Date(2026, 11, 15, 0, 0, 0, 0, datasource.Tehran)
+	ok := map[int]time.Time{
+		123001: time.Date(2026, 11, 15, 12, 30, 1, 0, datasource.Tehran),
+		90000:  time.Date(2026, 11, 15, 9, 0, 0, 0, datasource.Tehran),
+		122957: time.Date(2026, 11, 15, 12, 29, 57, 0, datasource.Tehran),
+	}
+	for in, want := range ok {
+		if got, good := timeOnDate(d, in); !good || !got.Equal(want) {
+			t.Errorf("timeOnDate(%d) = %v, %v; want %v", in, got, good, want)
+		}
+	}
+	for _, bad := range []int{0, 61038, 80000, 245959, 126099, 123061, -5} {
+		if got, good := timeOnDate(d, bad); good {
+			t.Errorf("timeOnDate(%d) = %v, want rejected", bad, got)
+		}
 	}
 }

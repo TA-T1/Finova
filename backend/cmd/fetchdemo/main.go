@@ -57,10 +57,27 @@ func main() {
 	shown := 0
 	for i := 0; i < len(snap.Contracts) && shown < 5; i += step {
 		c := snap.Contracts[i]
-		fmt.Printf("  %-10s %-4s under=%-8s strike=%-8.0f expiry=%s last=%-8.0f bid=%-8.0f ask=%-8.0f vol=%-9d OI=%d\n",
+		traded := "-"
+		if c.LastTradeTime != nil {
+			traded = c.LastTradeTime.In(datasource.Tehran).Format("2006-01-02 15:04:05")
+		}
+		fmt.Printf("  %-10s %-4s under=%-8s strike=%-8.0f expiry=%s last=%-8.0f bid=%-8.0f ask=%-8.0f vol=%-9d OI=%-8d traded=%s\n",
 			c.Symbol, c.Type, c.UnderlyingSymbol, c.Strike, c.Expiry.Format("2006-01-02"),
-			c.LastPrice, c.BidPrice, c.AskPrice, c.Volume, c.OpenInterest)
+			c.LastPrice, c.BidPrice, c.AskPrice, c.Volume, c.OpenInterest, traded)
 		shown++
+	}
+
+	withTime := 0
+	for _, c := range snap.Contracts {
+		if c.LastTradeTime != nil {
+			withTime++
+		}
+	}
+	fmt.Printf("\ncontracts with a last trade time: %d\n", withTime)
+	fmt.Println("sample underlyings:")
+	for i := 0; i < len(snap.Underlyings) && i < 3; i++ {
+		u := snap.Underlyings[i]
+		fmt.Printf("  %-10s %-32s last=%-9.0f volume=%d\n", u.Symbol, u.Name, u.LastPrice, u.Volume)
 	}
 	fmt.Printf("\ncall took: %s\n", took.Round(time.Millisecond))
 }
