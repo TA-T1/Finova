@@ -105,7 +105,60 @@ snap, err := src.FetchMarket(ctx)
 src.SetError(errors.New("boom")) // make later calls fail, to test error paths
 ```
 
-`backend/testdata/market_sample.json`: the 27 underlyings are real latest quotes
+`backend/testdata/market_sample.json` (fixture for `FakeSource`): the 27 underlyings are real latest quotes
 from `data-pipeline/output/underlyings_daily.csv` (2026-11-07). The 36 contracts
 are **synthetic** (`source_id` starts with `SYNTH`): they exist only to give
 the right shape and are not real market prices.
+
+### Live implementation: `tsetmc.Client.FetchMarket`
+
+One request, `GET /Instrument/GetInstrumentOptionMarketWatch/0`, is one
+snapshot. Each response row holds a call, a put and the underlying's quote;
+the adapter splits it into `OptionContract`s and de-duplicated
+`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on
+2026-11-15).
+
+| Our field | TSETMC field |
+|---|---|
+| `SourceID` | `insCode_C` / `insCode_P` |
+| `Symbol` | `lVal18AFC_C` / `_P` |
+| `UnderlyingSymbol` | `lval30_UA` (fallback: parsed from `lVal30_*`) |
+| `Strike` | `strikePrice` (fallback: name) |
+| `Expiry` | `endDate` (Gregorian `YYYYMMDD`; fallback: Jalali date in the name) |
+| `ContractSize` | `contractSize` |
+| `LastPrice` / `ClosePrice` / `PrevClose` | `pDrCotVal` / `pClosing` / `priceYesterday` |
+| `BidPrice`, `BidVolume` / `AskPrice`, `AskVolume` | `pMeDem`, `qTitMeDem` / `pMeOf`, `qTitMeOf` |
+| `Volume` / `Value` / `TradeCount` / `OpenInterest` | `qTotTran5J` / `qTotCap` / `zTotTran` / `oP` |
+| underlying `SourceID`, `LastPrice`, `ClosePrice`, `PrevClose` | `uaInsCode`, `pDrCotVal_UA`, `pClosing_UA`, `priceYesterday_UA` |
+
+Limits of this endpoint (left at their zero values):
+- `LastTradeTime` is always `nil` (not provided).
+- Underlying `Volume` is `0` and `Name` equals `Symbol` (only the short symbol is provided).
+  Full names are available from `GetInstrumentInfo/{insCode}`, but that would be one extra request per underlying.
+
+Behaviour:
+- **Normalization:** Arabic `ي`/`ك` become `ی`/`ک`, Persian and Arabic digits become ASCII,
+  and zero-width characters and surrounding whitespace are removed.
+- **Dates:** `Expiry` is a Gregorian date at 00:00 `Asia/Tehran`. Jalali dates are converted with `go-persian-calendar`.
+- **Missing values:** a missing, `null` or empty number is `0`.
+- **Bad rows:** a malformed row is skipped with a `slog` warning.
+  An empty or unrecognised response, or one with no valid contract, returns an error.
+
+Reliability, configured by env vars (see `backend/.env.example`):
+
+| Var | Default | Meaning |
+|---|---|---|
+| `TSETMC_TIMEOUT` | `10s` | timeout of each HTTP attempt |
+| `TSETMC_MAX_ATTEMPTS` | `3` | total attempts; retries on network errors, timeouts, 5xx and 429 with exponential backoff (500ms, 1s, ...); no retry on other 4xx |
+| `TSETMC_RATE_LIMIT` | `2` | requests per second (`0` = unlimited). TSETMC documents no limit, so this is a polite default |
+
+`go run ./cmd/fetchdemo` (from `backend/`) calls the real source once and prints the counts, 5 sample contracts and the call duration.
+`backend/scripts/capture_tsetmc_samples.sh` re-captures the real samples into `backend/testdata/`.
+Tests run offline against `httptest.Server` serving `testdata/tsetmc_option_watch.json`.
+
+### Historical option prices
+
+TSETMC's `GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/{adjusted}` is keyed by instrument code,
+and `Client.DailyPrices` already accepts any code, so it should also work with an option contract's `insCode`.
+**This has not been verified against a real option `insCode`.** It matters for the Sprint 3 decision, so check it first.
+The chain endpoint above returns only the current day.

@@ -6,6 +6,8 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/joho/godotenv v1.5.1
+	github.com/yaa110/go-persian-calendar v1.3.0
+	golang.org/x/time v0.16.0
 )
 
 require (
