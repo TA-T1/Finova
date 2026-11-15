@@ -79,7 +79,7 @@ func (c *Collector) CollectOptionChain(ctx context.Context) (CollectResult, erro
 		}
 
 		if !quotedUnderlyings[row.UnderlyingInsCode] {
-			if err := c.repo.InsertUnderlyingQuote(ctx, uid, res.TS, row.UnderlyingLast, row.UnderlyingClose); err != nil {
+			if err := c.repo.InsertUnderlyingQuote(ctx, uid, res.TS, row.UnderlyingLast, row.UnderlyingClose, row.UnderlyingYesterday); err != nil {
 				note(fmt.Errorf("underlying quote %s: %w", row.UnderlyingInsCode, err))
 			} else {
 				quotedUnderlyings[row.UnderlyingInsCode] = true

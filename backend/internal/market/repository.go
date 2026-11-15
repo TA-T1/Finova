@@ -129,14 +129,15 @@ func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts t
 }
 
 // InsertUnderlyingQuote writes a quote snapshot for an underlying at ts.
-func (r *Repository) InsertUnderlyingQuote(ctx context.Context, underlyingID int, ts time.Time, last, close int64) error {
+func (r *Repository) InsertUnderlyingQuote(ctx context.Context, underlyingID int, ts time.Time, last, close, prevClose int64) error {
 	const q = `
-		INSERT INTO underlying_quotes (underlying_id, ts, last_price, close_price, volume)
-		VALUES ($1, $2, $3, $4, NULL)
+		INSERT INTO underlying_quotes (underlying_id, ts, last_price, close_price, prev_close, volume)
+		VALUES ($1, $2, $3, $4, $5, NULL)
 		ON CONFLICT (underlying_id, ts) DO UPDATE SET
 			last_price  = EXCLUDED.last_price,
-			close_price = EXCLUDED.close_price`
-	_, err := r.db.Exec(ctx, q, underlyingID, ts, last, close)
+			close_price = EXCLUDED.close_price,
+			prev_close  = EXCLUDED.prev_close`
+	_, err := r.db.Exec(ctx, q, underlyingID, ts, last, close, prevClose)
 	return err
 }
 
