@@ -29,34 +29,39 @@ var tradingDay = time.Date(2026, 11, 7, 13, 0, 0, 0, datasource.Tehran)
 
 func TestDirectRuleUsesLastTradeTime(t *testing.T) {
 	snap := loadFixture(t)
-	ok, reason, err := hasTradedToday(t.Context(), nil, snap, tradingDay)
-	if err != nil || !ok {
-		t.Fatalf("trades today: ok=%v reason=%q err=%v", ok, reason, err)
+	if on, has := directRule(snap, "2026-11-07"); !on || !has {
+		t.Fatalf("trades on Nov 7: on=%v has=%v", on, has)
 	}
 	// Next day: the same data has no trade time on that date.
-	ok, _, err = hasTradedToday(t.Context(), nil, snap, tradingDay.AddDate(0, 0, 1))
-	if err != nil || ok {
-		t.Fatalf("no trades on the next day: ok=%v err=%v", ok, err)
+	if on, has := directRule(snap, "2026-11-08"); on || !has {
+		t.Fatalf("no trades on Nov 8: on=%v has=%v", on, has)
+	}
+	withoutTimes(snap)
+	if on, has := directRule(snap, "2026-11-07"); on || has {
+		t.Fatalf("no trade times at all: on=%v has=%v", on, has)
 	}
 }
 
 func TestDirectRuleUsesTehranDateNotUTC(t *testing.T) {
 	snap := loadFixture(t)
-	late := time.Date(2026, 11, 7, 23, 50, 0, 0, datasource.Tehran) // 20:20 UTC, still Nov 7 both places
-	for i := range snap.Contracts {
-		tt := time.Date(2026, 11, 7, 23, 40, 0, 0, datasource.Tehran)
-		snap.Contracts[i].LastTradeTime = &tt
+	set := func(tt time.Time) {
+		for i := range snap.Contracts {
+			t2 := tt
+			snap.Contracts[i].LastTradeTime = &t2
+		}
 	}
-	if ok, _, _ := hasTradedToday(t.Context(), nil, snap, late); !ok {
-		t.Error("23:40 Tehran trade should count for Nov 7 Tehran")
+	// 23:40 Tehran on Nov 7 is still Nov 7 in Tehran.
+	set(time.Date(2026, 11, 7, 23, 40, 0, 0, datasource.Tehran))
+	if on, _ := directRule(snap, "2026-11-07"); !on {
+		t.Error("23:40 Tehran trade should count for Nov 7")
 	}
-	// 00:10 Tehran on Nov 8 is Nov 7 UTC: it must count for Nov 8, not Nov 7.
-	for i := range snap.Contracts {
-		tt := time.Date(2026, 11, 8, 0, 10, 0, 0, datasource.Tehran)
-		snap.Contracts[i].LastTradeTime = &tt
-	}
-	if ok, _, _ := hasTradedToday(t.Context(), nil, snap, tradingDay); ok {
+	// 00:10 Tehran on Nov 8 is 20:40 UTC on Nov 7: it must count for Nov 8 only.
+	set(time.Date(2026, 11, 8, 0, 10, 0, 0, datasource.Tehran))
+	if on, _ := directRule(snap, "2026-11-07"); on {
 		t.Error("a trade at 00:10 Tehran on Nov 8 must not count for Nov 7")
+	}
+	if on, _ := directRule(snap, "2026-11-08"); !on {
+		t.Error("a trade at 00:10 Tehran on Nov 8 must count for Nov 8")
 	}
 }
 

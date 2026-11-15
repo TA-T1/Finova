@@ -112,11 +112,11 @@ the right shape and are not real market prices.
 
 ### Live implementation: `tsetmc.Client.FetchMarket`
 
-One request, `GET /Instrument/GetInstrumentOptionMarketWatch/0`, is one
-snapshot. Each response row holds a call, a put and the underlying's quote;
-the adapter splits it into `OptionContract`s and de-duplicated
-`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on
-2026-11-15).
+`GET /Instrument/GetInstrumentOptionMarketWatch/0` gives the snapshot. Each response row holds a call,
+a put and the underlying's quote; the adapter splits it into `OptionContract`s and de-duplicated
+`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on 2026-11-15).
+The chain has no names, no underlying volume and no trade times, so `FetchMarket` then makes
+two more requests to fill them (see "Enrichment" below). Those are best effort: if they fail, the chain is still returned.
 
 | Our field | TSETMC field |
 |---|---|
@@ -131,10 +131,24 @@ the adapter splits it into `OptionContract`s and de-duplicated
 | `Volume` / `Value` / `TradeCount` / `OpenInterest` | `qTotTran5J` / `qTotCap` / `zTotTran` / `oP` |
 | underlying `SourceID`, `LastPrice`, `ClosePrice`, `PrevClose` | `uaInsCode`, `pDrCotVal_UA`, `pClosing_UA`, `priceYesterday_UA` |
 
-Limits of this endpoint (left at their zero values):
-- `LastTradeTime` is always `nil` (not provided).
-- Underlying `Volume` is `0` and `Name` equals `Symbol` (only the short symbol is provided).
-  Full names are available from `GetInstrumentInfo/{insCode}`, but that would be one extra request per underlying.
+The chain endpoint itself lacks `LastTradeTime`, underlying `Volume` and underlying `Name`. They come from the enrichment below.
+
+#### Enrichment (2 extra requests per snapshot)
+
+| Request | Gives | Notes |
+|---|---|---|
+| `GET /ClosingPrice/GetMarketWatch?market=0&paperTypes[0..8]=1..9&showTraded=false&withBestLimits=false&hEven=0&RefID=0` | for every instrument: full name `lvc`, volume `qtj`, last trade time of day `hEven` (`HHMMSS`, no date) | about 3.7 MB and 1.2 s. `dEven` is always 0 here. |
+| `GET /ClosingPrice/GetClosingPriceInfo/{insCode}` for the most traded underlying | the date of the latest trading session, `dEven` (fallback `finalLastDate`) | about 40 ms |
+
+- `UnderlyingQuote.Name` = `lvc` (normalized), `Volume` = `qtj`. An underlying absent from the watch
+  (the real capture has one, وبصادر, a halted symbol) keeps `Name` = `Symbol` and `Volume` = `0`.
+- `OptionContract.LastTradeTime` = session date + `hEven`, but only for contracts whose chain `Volume` is > 0.
+  Contracts that did not trade keep `nil`. Their `hEven` is only a pre-open marker such as `061038`.
+  Times before 09:00 are rejected.
+- In the real capture, 1,000 of the 1,001 traded contracts have a time between 09:00 and 12:30.
+  One (ضموج844) reports 14:19:20, probably an exercise or settlement update.
+- If either request fails, a warning `enrichment failed` is logged and the unfilled fields stay at their defaults.
+  If only the closing-info request fails, names and volume are still filled.
 
 Behaviour:
 - **Normalization:** Arabic `ي`/`ك` become `ی`/`ک`, Persian and Arabic digits become ASCII,
@@ -165,25 +179,13 @@ The chain endpoint above returns only the current day.
 
 ### Known limitations and future work
 
-The TSETMC option-chain endpoint does not provide these fields. We chose to leave them
-unfilled for now (decision: 2026-11-15), because nothing downstream needs them yet.
-
-| Field | Value today | Guidance for callers |
-|---|---|---|
-| `OptionContract.LastTradeTime` | always `nil` | Timestamp quotes with `MarketSnapshot.FetchedAt`. The real value would need one request per contract (about 1,800 per snapshot), which does not fit a 30-60s cadence. |
-| `UnderlyingQuote.Volume` | always `0`, meaning **unknown** | Do not store it. If you must write the column, write `NULL` when it is `0`. |
-| `UnderlyingQuote.Name` | equals `Symbol` | Do not overwrite a stored full name with it. The collector already gets full names from `GetInstrumentInfo`. |
-
-**If underlying volume or full names are needed later:** TSETMC has a market-wide watch endpoint
-that returns volume (`qTotTran5J`) and full name (`lVal30`) for every instrument in a single request.
-The plan would be:
-1. Capture a real sample of that endpoint (extend `backend/scripts/capture_tsetmc_samples.sh`).
-   Its path and shape are **unverified**, because it could not be reached while building this adapter.
-2. Inside `FetchMarket`, make this one extra request and merge the matching instruments by `uaInsCode`.
-   If it fails, return the snapshot without those fields and log a warning. Do not fail the snapshot.
-3. Add a test with the captured sample, and remove the limitation above.
-
-This costs about one extra request per snapshot. The existing rate limit already covers it.
+| Item | Status |
+|---|---|
+| `LastTradeTime`, underlying `Name` and `Volume` | **Filled by the enrichment requests** (decision 2026-11-15: first left unfilled, then fixed after finding the endpoints in the browser). They are unset only when those requests fail, or for a contract that did not trade (`nil`), or an underlying missing from the market watch (`Name` = `Symbol`, `Volume` = `0` meaning *unknown*). Callers should not store `Volume` = 0 as a real value. |
+| Trade date on a holiday | **Unverified.** The enrichment takes the date from `GetClosingPriceInfo.dEven`, and it was only observed on a trading day (2026-11-15). We expect it to stay at the last session's date on Thursday, Friday and holidays, but nobody has checked yet. The snapshot has a guard for this case (see "How a non-trading day is detected"). Check the first closed weekday after deployment. |
+| Cost | Each snapshot now downloads about 3.7 MB more (the market watch). At a 30-60 s polling cadence, consider calling it less often or caching the names. |
+| Names of contracts' underlyings not in the market watch | Fall back to the symbol. The collector gets full names from `GetInstrumentInfo` when it creates an underlying. |
+| Real samples | `backend/testdata/tsetmc_market_watch.json` is the real market watch, **trimmed** to the instruments in the option chain (1,458 rows) with the best-limits ladder (`blDs`) removed, to keep it at about 0.8 MB. `tsetmc_closing_price_info.json` is the closing info of اهرم. `capture_tsetmc_samples.sh` fetches the untrimmed originals. |
 
 ## Daily end-of-day snapshot (`cmd/snapshot`, `internal/snapshot`)
 
@@ -222,12 +224,14 @@ It returns the number of rows written; skipping a non-trading day returns 0, log
 ### How a non-trading day is detected
 
 The spec says to skip the day when no contract has a last trade time on today's Tehran date.
-TSETMC provides no last trade time (see "Known limitations"), so that rule alone would skip every day.
-The checks run in this order:
-1. **A contract has `LastTradeTime`** (another source, or the fake): trading happened iff one of them falls on today's Tehran date.
-2. **Otherwise, compare with the latest earlier snapshot** in `quote_snapshots`. On a closed day TSETMC keeps serving the last trading
-   day's final numbers, so if no traded contract has a different volume, trade count, last price or close price, the day is skipped.
-   No holiday calendar is needed.
+The TSETMC adapter fills `LastTradeTime` from its enrichment requests, so that rule is the main one. The checks run in this order:
+1. **A contract has `LastTradeTime`:** trading happened iff one of them falls on today's Tehran date.
+   *Guard:* if that says "yes" but every figure (volume, trade count, last price, close price) is identical to the latest earlier snapshot,
+   the day is still skipped, because a source serving a stale date would otherwise store a duplicate row for a holiday.
+   This guard exists because the date's behaviour on a holiday is unverified (see "Known limitations").
+2. **No contract has a `LastTradeTime` at all** (the enrichment failed, or another source): compare with the latest earlier snapshot in
+   `quote_snapshots`. On a closed day TSETMC keeps serving the last trading day's final numbers, so if no traded contract has a different
+   volume, trade count, last price or close price, the day is skipped. No holiday calendar is needed.
 3. **No earlier snapshot** (the first ever run): Thursday and Friday are skipped, and so is a day on which no contract has volume.
 
 Caveats:

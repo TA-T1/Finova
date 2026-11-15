@@ -26,29 +26,23 @@ type previousDay struct {
 // that Thursdays, Fridays and holidays write nothing without a holiday
 // calendar. It reports a short reason for the log.
 //
-//  1. If any contract carries a LastTradeTime, we use the direct rule: trading
-//     happened iff some LastTradeTime falls on today's Tehran date.
-//  2. TSETMC's option-chain endpoint gives no last trade time, so normally we
-//     compare with the latest earlier snapshot. On a closed day the source
-//     keeps serving the last trading day's final numbers, so if no contract's
-//     volume, trade count or prices differ from that snapshot, nothing traded.
+//  1. If any contract carries a LastTradeTime (the TSETMC adapter fills it
+//     from the market watch), we use the direct rule: trading happened iff some
+//     LastTradeTime falls on today's Tehran date. As a guard against a source
+//     that serves a stale date, a "yes" is overruled when every figure is
+//     identical to the latest earlier snapshot.
+//  2. If the source gave no trade times at all (its extra requests failed, or
+//     it never provides them), compare with the latest earlier snapshot. On a
+//     closed day the source keeps serving the last trading day's final
+//     numbers, so if no contract's volume, trade count or prices differ, nothing
+//     traded.
 //  3. With no earlier snapshot (first ever run) we cannot compare. We then
 //     skip Thursday and Friday (the Iranian weekend) and any day on which no
 //     contract has volume.
 func hasTradedToday(ctx context.Context, db querier, snap *datasource.MarketSnapshot, now time.Time) (bool, string, error) {
 	today := now.Format(dateLayout)
-
-	hasTime := false
-	for _, c := range snap.Contracts {
-		if c.LastTradeTime == nil {
-			continue
-		}
-		hasTime = true
-		if c.LastTradeTime.In(datasource.Tehran).Format(dateLayout) == today {
-			return true, "contract has a last trade time today", nil
-		}
-	}
-	if hasTime {
+	direct, hasTime := directRule(snap, today)
+	if hasTime && !direct {
 		return false, "no contract has a last trade time on " + today, nil
 	}
 
@@ -56,10 +50,34 @@ func hasTradedToday(ctx context.Context, db querier, snap *datasource.MarketSnap
 	if err != nil {
 		return false, "", err
 	}
-	if prev == nil {
+	switch {
+	case hasTime: // direct rule says yes
+		if prev != nil {
+			if ok, reason, _ := decideAgainst(snap, prev); !ok {
+				return false, "last trade time is today but " + reason + " (stale source?)", nil
+			}
+		}
+		return true, "contract has a last trade time today", nil
+	case prev == nil:
 		return decideWithoutHistory(snap, now)
+	default:
+		return decideAgainst(snap, prev)
 	}
-	return decideAgainst(snap, prev)
+}
+
+// directRule reports whether any contract has a LastTradeTime on today
+// (Tehran date, YYYY-MM-DD), and whether any contract has one at all.
+func directRule(snap *datasource.MarketSnapshot, today string) (onToday, hasTime bool) {
+	for _, c := range snap.Contracts {
+		if c.LastTradeTime == nil {
+			continue
+		}
+		hasTime = true
+		if c.LastTradeTime.In(datasource.Tehran).Format(dateLayout) == today {
+			return true, true
+		}
+	}
+	return false, hasTime
 }
 
 // decideAgainst implements rule 2.

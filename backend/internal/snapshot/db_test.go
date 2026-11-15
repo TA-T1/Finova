@@ -222,3 +222,32 @@ func TestRunReturnsFetchErrorAndWritesNothing(t *testing.T) {
 		t.Fatalf("%d rows written after a failed fetch", got)
 	}
 }
+
+// A source that serves a stale trade date (e.g. Friday data stamped "today")
+// must not create a duplicate row: identical figures overrule the date.
+func TestRunStaleTradeTimeWithIdenticalFiguresIsSkipped(t *testing.T) {
+	db := testDB(t)
+	sat := tehran(2026, 11, 14, 13, 0, 0)
+	stamp := func(day time.Time) *datasource.MarketSnapshot {
+		s := loadFixture(t)
+		tt := day.Add(-30 * time.Minute)
+		for i := range s.Contracts {
+			t2 := tt
+			s.Contracts[i].LastTradeTime = &t2
+		}
+		return s
+	}
+	if n, err := Run(t.Context(), fakeOf(t, stamp(sat)), db, quiet(), at(sat)); err != nil || n == 0 {
+		t.Fatalf("saturday: n=%d err=%v", n, err)
+	}
+	fri := sat.AddDate(0, 0, 6) // same figures, but the source claims they are from today
+	if n, err := Run(t.Context(), fakeOf(t, stamp(fri)), db, quiet(), at(fri)); err != nil || n != 0 {
+		t.Fatalf("stale source: n=%d err=%v, want 0", n, err)
+	}
+	// Genuinely new figures with today's trade time are stored.
+	next := stamp(fri)
+	next.Contracts[0].Volume += 5
+	if n, err := Run(t.Context(), fakeOf(t, next), db, quiet(), at(fri)); err != nil || n == 0 {
+		t.Fatalf("real trading: n=%d err=%v", n, err)
+	}
+}
