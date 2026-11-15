@@ -3,6 +3,8 @@ package market
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -25,6 +27,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	m.POST("/collect/daily/:insCode", h.collectDaily)
 	m.GET("/options", h.listOptions)
 	m.GET("/underlyings", h.listUnderlyings)
+	m.GET("/chain", h.optionChain)
+	m.GET("/symbol/:symbol", h.symbolPage)
 }
 
 // collectOptions triggers one option-chain collection pass.
@@ -74,4 +78,52 @@ func (h *Handler) listUnderlyings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"count": len(rows), "items": rows})
+}
+
+// optionChain returns call/put pairs for an underlying and Gregorian expiry.
+func (h *Handler) optionChain(c *gin.Context) {
+	symbol := strings.TrimSpace(c.Query("underlying"))
+	if symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "underlying is required"})
+		return
+	}
+	expiryText := c.Query("expiry")
+	expiry, err := time.Parse("2006-01-02", expiryText)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "expiry must use YYYY-MM-DD"})
+		return
+	}
+	strikes, err := h.repo.ListOptionChainForExpiry(c.Request.Context(), symbol, expiry)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if len(strikes) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "no active option contracts for underlying and expiry"})
+		return
+	}
+	c.JSON(http.StatusOK, OptionChain{
+		UnderlyingSymbol: symbol,
+		ExpiryDate:       expiryText,
+		Strikes:          strikes,
+	})
+}
+
+// symbolPage returns the underlying quote and its active options summary.
+func (h *Handler) symbolPage(c *gin.Context) {
+	symbol := strings.TrimSpace(c.Param("symbol"))
+	if symbol == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "symbol is required"})
+		return
+	}
+	page, err := h.repo.GetSymbolPage(c.Request.Context(), symbol)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if page == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "symbol has no active option contracts"})
+		return
+	}
+	c.JSON(http.StatusOK, page)
 }
