@@ -83,3 +83,29 @@ A re-collection never downgrades a known kind back to `other`.
 | `COLLECT_INTERVAL` | *(empty = off)* | enable background collector, e.g. `60s`, `2m` |
 
 > The server must run from a network that can reach `cdn.tsetmc.com` (Iran).
+
+## Market snapshot adapter (`MarketSource`)
+
+`internal/datasource/market.go` defines the snapshot API the collection
+service should use: `FetchMarket(ctx) (*MarketSnapshot, error)` returns every
+active option contract (with its latest quote) plus quotes for every
+underlying that has options, in one call.
+
+Field names follow the brief in `docs/01-crawl-adapter.md`; `docs/api.md` had no
+contract for these structs. Prices are `float64` here (the older
+`OptionRow`/`OptionLeg` types use `int64`); `Expiry` is a Gregorian date at
+00:00 `Asia/Tehran`; missing numbers are `0`; `LastTradeTime` is `nil` when
+unknown.
+
+### FakeSource (offline development)
+
+```go
+src, err := datasource.NewFake("testdata/market_sample.json") // implements MarketSource
+snap, err := src.FetchMarket(ctx)
+src.SetError(errors.New("boom")) // make later calls fail, to test error paths
+```
+
+`backend/testdata/market_sample.json`: the 27 underlyings are real latest quotes
+from `data-pipeline/output/underlyings_daily.csv` (2026-11-07). The 36 contracts
+are **synthetic** (`source_id` starts with `SYNTH`): they exist only to give
+the right shape and are not real market prices.
