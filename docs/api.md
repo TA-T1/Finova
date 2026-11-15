@@ -172,10 +172,27 @@ Tests run offline against `httptest.Server` serving `testdata/tsetmc_option_watc
 
 ### Historical option prices
 
-TSETMC's `GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/{adjusted}` is keyed by instrument code,
-and `Client.DailyPrices` already accepts any code, so it should also work with an option contract's `insCode`.
-**This has not been verified against a real option `insCode`.** It matters for the Sprint 3 decision, so check it first.
-The chain endpoint above returns only the current day.
+**Yes, TSETMC serves option price history.** Verified in the browser on 2026-11-15 with
+`GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/0`, the same endpoint `Client.DailyPrices` already wraps:
+
+| Instrument | Rows | Range |
+|---|---|---|
+| active call ضهرم8030 (`61500711433740234`) | 61 | 2026-08-19 .. 2026-11-14 (since listing) |
+| its put طهرم8030 (`58980125072230074`) | 61 | 2026-08-19 .. 2026-11-14 |
+| underlying اهرم | 1,175 | 2021-12-20 .. 2026-11-14 |
+
+Each row has `dEven`, `priceFirst`, `priceMax`, `priceMin`, `pDrCotVal` (last), `pClosing`, `priceYesterday`,
+`qTotTran5J` (volume), `qTotCap` (value) and `zTotTran` (trade count).
+
+What this means for the Sprint 3 backfill:
+- **Missing from history:** bid, ask and open interest, which exist only in the live chain. `quote_snapshots` rows backfilled from here can fill
+  `close_price`, `last_price`, `volume`, `value`, `trade_count` and `underlying_price` (joined from the underlying's own history by date),
+  but must leave bid/ask/open interest at 0 or NULL.
+- **Reach:** a contract's history starts at its listing, so about 60 days for a current contract. Contracts that have already expired do not appear in the
+  chain, so their `insCode`s are unknown. Backfilling them would need another way to list them (not investigated).
+- **Today is not included:** the latest row is yesterday's. Today comes from the live snapshot.
+- **`adjusted=1`:** returned a single row for the options and the underlying in this check, so use `adjusted=0` for options.
+- **Cost:** one request per contract (about 1,800), so a full backfill of the current contracts needs about 1,800 requests, around 15 minutes at the default 2 requests per second.
 
 ### Known limitations and future work
 
@@ -192,7 +209,7 @@ The chain endpoint above returns only the current day.
 `quote_snapshots` keeps one row per contract per trading day (migration
 `000007_quote_snapshots`; **new migration, the backend team should review it**).
 `option_quotes` holds intraday ticks only, so this table is our real price history for the backtest.
-It may be the only history we get (see "Historical option prices" above).
+It may be the only history we get (see "Historical option prices" above: history exists for about the last 60 days of current contracts, without bid/ask/open interest).
 
 | Column | Notes |
 |---|---|
