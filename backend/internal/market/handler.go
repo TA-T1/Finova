@@ -1,6 +1,7 @@
 package market
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,7 @@ func NewHandler(col *Collector, repo *Repository) *Handler {
 // RegisterRoutes mounts the market endpoints under rg (e.g. /api/v1).
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	m := rg.Group("/market")
+	m.GET("/status", h.marketStatus)
 	m.POST("/collect/options", h.collectOptions)
 	m.POST("/collect/daily/:insCode", h.collectDaily)
 	m.GET("/options", h.listOptions)
@@ -31,10 +33,29 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	m.GET("/symbol/:symbol", h.symbolPage)
 }
 
+// marketStatus reports the current Tehran trading session state and the last
+// quote timestamp persisted by the collector.
+func (h *Handler) marketStatus(c *gin.Context) {
+	lastUpdate, err := h.repo.LastMarketUpdate(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"marketOpen": MarketOpenAt(time.Now()),
+		"lastUpdate": lastUpdate,
+		"timezone":   tehranTimezone,
+	})
+}
+
 // collectOptions triggers one option-chain collection pass.
 func (h *Handler) collectOptions(c *gin.Context) {
 	res, err := h.col.CollectOptionChain(c.Request.Context())
 	if err != nil {
+		if errors.Is(err, ErrMarketClosed) {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
 		c.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
 		return
 	}

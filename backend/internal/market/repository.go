@@ -141,6 +141,22 @@ func (r *Repository) InsertUnderlyingQuote(ctx context.Context, underlyingID int
 	return err
 }
 
+// LastMarketUpdate returns the timestamp of the most recently persisted quote.
+func (r *Repository) LastMarketUpdate(ctx context.Context) (*time.Time, error) {
+	const q = `
+		SELECT MAX(ts)
+		FROM (
+			SELECT ts FROM option_quotes
+			UNION ALL
+			SELECT ts FROM underlying_quotes
+		) market_quotes`
+	var latest *time.Time
+	if err := r.db.QueryRow(ctx, q).Scan(&latest); err != nil {
+		return nil, err
+	}
+	return latest, nil
+}
+
 // UpsertDailyPrice writes one end-of-day record for an underlying.
 func (r *Repository) UpsertDailyPrice(ctx context.Context, underlyingID int, d datasource.DailyPrice) error {
 	const q = `
