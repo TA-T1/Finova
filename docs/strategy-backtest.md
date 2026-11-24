@@ -52,13 +52,13 @@ Money is in rials per position (price x 1000 x contracts), `exit_reason` is `exp
 Same conventions as `api-contract.md`: camelCase, `null` for unknown, no omitted fields.
 
 `GET /backtests?underlying=<symbol>&template=<id>&model=<modelName>&limit=` (extends 3.2: two new filters, and two new
-fields on each item: `underlying`, `template`; both `null` for a signal backtest):
+fields on each item: `underlying`, `template`, both `null` for a signal backtest; plus `tradeCount`, `avgPnl` and `modelPricedShare`, also `null` for a signal backtest):
 
 ```json
 { "count": 1, "items": [ {
     "id": 12, "modelName": "strategy:bull-call-spread", "template": "bull-call-spread", "underlying": "خودرو",
     "startDate": "2025-02-05", "endDate": "2026-11-18", "winRate": 0.46, "maxDrawdown": 0.21, "totalReturn": 0.18,
-    "trades": 90, "avgPnl": 1250000, "modelPricedShare": 1.0, "createdAt": "2026-11-24T20:00:00+03:30" } ] }
+    "tradeCount": 90, "avgPnl": 1250000, "modelPricedShare": 1.0, "createdAt": "2026-11-24T20:00:00+03:30" } ] }
 ```
 
 `GET /backtests/:id` (extends 3.3) adds, for a strategy run: `params`, `metrics` (camelCase copy of the engine's
