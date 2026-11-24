@@ -57,3 +57,37 @@ export function bsDelta(
 	const { d1 } = d1d2(S, K, T, r, sigma);
 	return kind === "call" ? normCdf(d1) : normCdf(d1) - 1;
 }
+
+const normPdf = (x: number) => 0.3989422804 * Math.exp((-x * x) / 2);
+
+export interface Greeks {
+	delta: number;
+	gamma: number;
+	/** per +1 volatility point */
+	vega: number;
+	/** per calendar day */
+	theta: number;
+	/** per +1 rate point */
+	rho: number;
+}
+
+/** Greeks in the units of docs/api-contract.md: vega per vol point, theta per day, rho per rate point. */
+export function bsGreeks(kind: OptionType, S: number, K: number, T: number, r: number, sigma: number): Greeks {
+	if (T <= 0 || sigma <= 0) {
+		return { delta: bsDelta(kind, S, K, T, r, sigma), gamma: 0, vega: 0, theta: 0, rho: 0 };
+	}
+	const { d1, d2 } = d1d2(S, K, T, r, sigma);
+	const disc = Math.exp(-r * T);
+	const sd = sigma * Math.sqrt(T);
+	const call = kind === "call";
+	const thetaYear =
+		-(S * normPdf(d1) * sigma) / (2 * Math.sqrt(T)) +
+		(call ? -r * K * disc * normCdf(d2) : r * K * disc * normCdf(-d2));
+	return {
+		delta: call ? normCdf(d1) : normCdf(d1) - 1,
+		gamma: normPdf(d1) / (S * sd),
+		vega: (S * normPdf(d1) * Math.sqrt(T)) / 100,
+		theta: thetaYear / 365,
+		rho: ((call ? 1 : -1) * K * T * disc * normCdf(call ? d2 : -d2)) / 100,
+	};
+}

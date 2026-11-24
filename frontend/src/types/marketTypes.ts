@@ -1,38 +1,56 @@
-// Every shape the market pages (market watch, option chain) get from the API.
-// This is the ONE place to update when the real backend is wired in.
+// Every shape the market pages get from the API, as agreed in docs/api-contract.md
+// (section 1). This is the ONE place to update when the backend changes.
 //
-// Legend used in the comments below:
-//   [contract]  exists today: docs/api.md + the JSON tags in
-//               backend/internal/market/repository.go (camelCase).
-//   [proposed]  NOT in the contract yet, but these pages need it. Each one is
-//               listed, with an example, in docs/frontend-api-requests.md.
-//               The names follow backend/internal/options (Evaluation, Metrics).
+// Conventions from the contract:
+//   - camelCase; a field is never omitted, an unknown value is `null`
+//   - exchange prices (lastPrice, strikePrice, bestBid, ...) are integers in RIAL
+//   - calculated values (marketPrice, timeValue, delta, ...) are per SHARE, not per
+//     contract: multiply by contractSize for a contract
+//   - volatilities and rates are decimal fractions (0.35 = 35%); names ending in
+//     `Percent` are percentages (2.5 = 2.5%)
+//   - dates are Gregorian YYYY-MM-DD (Tehran calendar day); timestamps are RFC 3339
 //
-// Conventions that come from the backend:
-//   - prices are integers in RIAL (the DB stores BIGINT); contract size is 1000
-//   - a missing value is `null` (the Go side uses pointers); never 0
-//   - option type is "call" | "put"
-//   - dates are ISO 8601 strings; expiryDate is a DATE, so it arrives as
-//     "2026-12-20T00:00:00Z" and only its YYYY-MM-DD part is meaningful
+// [requested] marks a field the pages use that the contract does NOT have yet. The
+// pages show "—" until the backend sends it (see docs/frontend-api-notes.md).
 
 export type OptionType = "call" | "put";
 export type UnderlyingKind = "stock" | "fund" | "index" | "other";
 export type Moneyness = "ITM" | "ATM" | "OTM";
-
+export type PriceSource = "last" | "mid" | "close";
 export type SortDir = "asc" | "desc";
 
-/** An option contract with its latest quote and calculated columns. */
-export interface OptionQuote {
-	// ---- [contract] ----
-	contractId: number;
-	symbol: string; // e.g. ضخود9001
-	underlyingId: number;
-	underlyingSymbol: string; // e.g. خودرو
-	underlyingKind: UnderlyingKind;
-	optionType: OptionType;
-	strikePrice: number; // rial
-	expiryDate: string;
-	contractSize: number;
+/** Calculated fields of one contract (contract 1.5). All `null` before its first metrics run. */
+export interface CalculatedFields {
+	underlyingPrice: number | null;
+	daysToExpiry: number | null;
+	moneyness: Moneyness | null;
+	marketPrice: number | null;
+	priceSource: PriceSource | null;
+	intrinsicValue: number | null;
+	timeValue: number | null;
+	breakEven: number | null;
+	/** Move needed from the spot to break even, in percent. */
+	breakEvenPercent: number | null;
+	leverage: number | null;
+	effectiveLeverage: number | null;
+	impliedVolatility: number | null;
+	historicalVolatility: number | null;
+	greeksVolatility: number | null;
+	delta: number | null;
+	gamma: number | null;
+	vega: number | null;
+	theta: number | null;
+	rho: number | null;
+	/** Black-Scholes price at HV20, per share. */
+	theoreticalPrice: number | null;
+	priceGap: number | null;
+	/** (market - theoretical) / theoretical x 100. */
+	priceGapPercent: number | null;
+	metricsTs: string | null;
+}
+
+/** The exchange quote of a contract (contract 1.5). */
+export interface QuoteFields {
 	lastPrice: number | null;
 	closePrice: number | null;
 	bestBid: number | null;
@@ -40,30 +58,90 @@ export interface OptionQuote {
 	volume: number | null;
 	openInterest: number | null;
 	quoteTs: string | null;
-
-	// ---- [proposed] quote extras ----
-	/** Previous day's price; the % change is computed from it. */
-	prevClose: number | null;
-	/** Traded value today, rial. */
-	value: number | null;
-
-	// ---- [proposed] calculated columns (backend/internal/options) ----
-	/** Decimal fraction per year: 0.35 means 35%. null when not computable. */
-	impliedVolatility: number | null;
-	/** Call: 0..1, put: -1..0. null when not computable. */
-	delta: number | null;
-	/** Black-Scholes price at the historical volatility, per share, rial. */
-	theoreticalPrice: number | null;
-	/** (market - theoretical) / theoretical * 100. Already a percentage. */
-	priceGapPercent: number | null;
-	/** Underlying price at which the buyer breaks even at expiry, rial. */
-	breakEven: number | null;
-	/** spot / premium. null when the premium is 0. */
-	leverage: number | null;
-	moneyness: Moneyness | null;
+	/** [requested] previous day's price: the "% change" of the last price needs it. */
+	prevClose?: number | null;
+	/** [requested] traded value today, rial (option_quotes.value is already stored). */
+	value?: number | null;
 }
 
-/** [contract] GET /api/v1/market/underlyings -> items[] */
+/** One row of GET /market/options. */
+export interface OptionQuote extends QuoteFields, CalculatedFields {
+	contractId: number;
+	symbol: string; // e.g. ضخود1234
+	underlyingId: number;
+	underlyingSymbol: string;
+	underlyingKind: UnderlyingKind;
+	optionType: OptionType;
+	strikePrice: number;
+	expiryDate: string; // YYYY-MM-DD
+	contractSize: number;
+}
+
+/** GET /market/options: the list plus the paging block. */
+export interface PagedResponse<T> {
+	items: T[];
+	count: number; // items on this page
+	page: number; // 1-based
+	pageSize: number;
+	total: number; // rows over all pages
+	totalPages: number;
+}
+
+/** Sortable fields of /market/options (contract 1.5). Null values sort last in both directions. */
+export type MarketSortKey =
+	| "symbol"
+	| "underlyingSymbol"
+	| "optionType"
+	| "strikePrice"
+	| "expiryDate"
+	| "daysToExpiry"
+	| "lastPrice"
+	| "volume"
+	| "openInterest"
+	| "impliedVolatility"
+	| "delta"
+	| "leverage"
+	| "effectiveLeverage"
+	| "timeValue"
+	| "intrinsicValue"
+	| "priceGapPercent"
+	| "breakEvenPercent";
+
+/** Query of GET /market/options. `limit` no longer exists: use pageSize. */
+export interface MarketWatchParams {
+	underlying?: string; // symbol
+	underlyingKind?: UnderlyingKind;
+	type?: OptionType;
+	expiry?: string; // YYYY-MM-DD
+	sort?: MarketSortKey;
+	order?: SortDir;
+	page?: number;
+	pageSize?: number; // default 50, maximum 500
+}
+
+/** One side of a chain row (contract 1.6). The strike and expiry are on the row / the response. */
+export interface ChainSide extends QuoteFields, Omit<CalculatedFields, "underlyingPrice" | "daysToExpiry"> {
+	symbol: string;
+	/** [requested] needed to put the contract in a strategy. */
+	contractId?: number;
+}
+
+export interface ChainStrike {
+	strikePrice: number;
+	call: ChainSide | null;
+	put: ChainSide | null;
+}
+
+/** GET /market/chain?underlying=&expiry= */
+export interface ChainResponse {
+	underlyingSymbol: string;
+	expiryDate: string;
+	daysToExpiry: number | null;
+	underlyingPrice: number | null;
+	strikes: ChainStrike[];
+}
+
+/** GET /market/underlyings -> items[] */
 export interface Underlying {
 	id: number;
 	symbol: string;
@@ -73,67 +151,51 @@ export interface Underlying {
 	kind: UnderlyingKind;
 }
 
-/** [proposed] GET /api/v1/market/underlyings/:symbol */
-export interface UnderlyingDetail extends Underlying {
-	lastPrice: number | null;
-	closePrice: number | null;
-	prevClose: number | null;
-	/** Distinct expiries that have contracts, ascending. "YYYY-MM-DD". */
-	expiryDates: string[];
-}
-
-/** [proposed] GET /api/v1/market/expiries -> items[]: feeds the expiry filter. */
-export interface ExpiryInfo {
-	expiryDate: string; // "YYYY-MM-DD" (a date; no time part is needed)
-	contractCount: number;
-}
-
-/** [contract] list envelope used by /market/options and /market/underlyings. */
 export interface ListResponse<T> {
-	count: number; // items in this response
+	count: number;
 	items: T[];
 }
 
-/** [proposed] the same envelope plus paging, for the market watch. */
-export interface PagedResponse<T> extends ListResponse<T> {
-	total: number; // matching rows over all pages
-	page: number; // 1-based
-	pageSize: number;
+/** An expiry of GET /market/expiries (and of the symbol page). */
+export interface ExpiryInfo {
+	expiryDate: string;
+	daysToExpiry?: number; // only /market/expiries has it
+	contractCount: number;
 }
 
-/** Columns the market watch can be sorted by (values of the `sortBy` param). */
-export type MarketSortKey =
-	| "symbol"
-	| "underlyingSymbol"
-	| "optionType"
-	| "strikePrice"
-	| "expiryDate"
-	| "lastPrice"
-	| "bestBid"
-	| "volume"
-	| "value"
-	| "openInterest"
-	| "impliedVolatility"
-	| "delta"
-	| "priceGapPercent"
-	| "breakEven"
-	| "leverage"
-	| "moneyness";
+/** GET /market/expiries?underlying= */
+export interface ExpiriesResponse {
+	underlyingSymbol: string | null;
+	items: (ExpiryInfo & { daysToExpiry: number })[];
+}
 
-/**
- * Query of the market watch: GET /api/v1/market/options
- * [contract] underlying, type, underlyingKind   [proposed] the rest
- * (the contract has `limit`, which `pageSize` replaces).
- */
-export interface MarketWatchParams {
-	underlying?: string; // symbol, exact
-	type?: OptionType;
-	underlyingKind?: UnderlyingKind;
-	expiry?: string; // "YYYY-MM-DD"
-	page?: number;
-	pageSize?: number;
-	sortBy?: MarketSortKey;
-	sortDir?: SortDir;
+export interface StrikeOpenInterest {
+	strikePrice: number;
+	callOpenInterest: number;
+	putOpenInterest: number;
+}
+
+/** GET /market/underlyings/:symbol: the symbol page (contract 1.3). */
+export interface SymbolDetail {
+	symbol: string;
+	name: string | null;
+	kind: UnderlyingKind;
+	price: number | null;
+	priceChange: number | null;
+	priceChangePercent: number | null;
+	expiries: ExpiryInfo[];
+	openInterest: { calls: number; puts: number; pcr: number | null };
+	/** Totals over all active expiries. */
+	strikeOpenInterest: StrikeOpenInterest[];
+	/** Of the nearest active expiry. */
+	maxPain: { expiryDate: string; strikePrice: number; totalPayout: number } | null;
+}
+
+/** GET /market/status */
+export interface MarketStatus {
+	marketOpen: boolean;
+	lastUpdate: string | null;
+	timezone: string;
 }
 
 /** The error body the backend sends on failure: { "error": "message" }. */

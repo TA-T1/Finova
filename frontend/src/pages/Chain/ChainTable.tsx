@@ -2,8 +2,8 @@ import { Fragment, useMemo } from "react";
 import ChangeBadge from "@/components/Custom/ChangeBadge";
 import NumberCell from "@/components/Custom/NumberCell";
 import { cn } from "@/lib/utils";
-import type { OptionQuote } from "@/types/marketTypes";
-import { isInTheMoney, locatePrice, pairByStrike } from "./chainUtils";
+import type { ChainSide, ChainStrike } from "@/types/marketTypes";
+import { isInTheMoney, locatePrice } from "./chainUtils";
 import { changePercent, formatInt } from "@/utils/format";
 
 // Both sides show the same eight fields, mirrored around the strike column.
@@ -15,7 +15,7 @@ import { changePercent, formatInt } from "@/utils/format";
 interface Field {
 	id: string;
 	label: string;
-	cell: (q: OptionQuote) => React.ReactNode;
+	cell: (q: ChainSide) => React.ReactNode;
 }
 
 const FIELDS: Record<string, Field> = {
@@ -36,29 +36,29 @@ const PUT_FIELDS = INNER_TO_OUTER; // starts next to the strike
 const COLS = CALL_FIELDS.length + 1 + PUT_FIELDS.length;
 
 interface Props {
-	items: OptionQuote[];
+	strikes: ChainStrike[];
 	underlyingPrice: number | null;
 	loading?: boolean;
 }
 
 const sideHead = "sticky z-20 border-b border-neutral-200 bg-neutral-50 px-2 py-1.5 text-center text-xs font-semibold whitespace-nowrap text-neutral-600";
 
-export default function ChainTable({ items, underlyingPrice, loading }: Props) {
-	const rows = useMemo(() => pairByStrike(items), [items]);
+export default function ChainTable({ strikes, underlyingPrice, loading }: Props) {
+	const rows = useMemo(() => [...strikes].sort((a, b) => a.strikePrice - b.strikePrice), [strikes]);
 
 	// The strike nearest to the underlying price, and where the price falls
 	// between two strikes (the line is drawn after index `lineAfter`).
 	const { nearest, lineAfter } = useMemo(
-		() => locatePrice(rows.map((r) => r.strike), underlyingPrice),
+		() => locatePrice(rows.map((r) => r.strikePrice), underlyingPrice),
 		[rows, underlyingPrice],
 	);
 
-	const sideCell = (q: OptionQuote | undefined, f: Field, itm: boolean, key: string) => (
+	const sideCell = (q: ChainSide | null, side: "call" | "put", f: Field, itm: boolean, key: string) => (
 		<td
 			key={key}
 			className={cn(
 				"border-b border-neutral-100 px-2 py-1.5 text-center whitespace-nowrap",
-				itm ? (q?.optionType === "call" ? "bg-sky-50" : "bg-amber-50") : "bg-white",
+				itm ? (side === "call" ? "bg-sky-50" : "bg-amber-50") : "bg-white",
 			)}
 		>
 			{q ? f.cell(q) : <span className="text-neutral-300">—</span>}
@@ -106,13 +106,13 @@ export default function ChainTable({ items, underlyingPrice, loading }: Props) {
 				<tbody>
 					{lineAfter === -1 && priceLine}
 					{rows.map((r, i) => {
-						const callItm = r.call ? isInTheMoney("call", r.strike, underlyingPrice) : false;
-						const putItm = r.put ? isInTheMoney("put", r.strike, underlyingPrice) : false;
-						const isNearest = r.strike === nearest;
+						const callItm = r.call ? isInTheMoney("call", r.strikePrice, underlyingPrice) : false;
+						const putItm = r.put ? isInTheMoney("put", r.strikePrice, underlyingPrice) : false;
+						const isNearest = r.strikePrice === nearest;
 						return (
-							<Fragment key={r.strike}>
+							<Fragment key={r.strikePrice}>
 								<tr>
-									{CALL_FIELDS.map((f) => sideCell(r.call, f, callItm, `c${f.id}`))}
+									{CALL_FIELDS.map((f) => sideCell(r.call, "call", f, callItm, `c${f.id}`))}
 									<td
 										className={cn(
 											"border-x border-b border-neutral-200 bg-neutral-100 px-3 py-1.5 text-center font-bold whitespace-nowrap text-neutral-900",
@@ -120,9 +120,9 @@ export default function ChainTable({ items, underlyingPrice, loading }: Props) {
 										)}
 										title={isNearest ? "نزدیک‌ترین قیمت اعمال به قیمت دارایی پایه" : undefined}
 									>
-										<NumberCell value={r.strike} />
+										<NumberCell value={r.strikePrice} />
 									</td>
-									{PUT_FIELDS.map((f) => sideCell(r.put, f, putItm, `p${f.id}`))}
+									{PUT_FIELDS.map((f) => sideCell(r.put, "put", f, putItm, `p${f.id}`))}
 								</tr>
 								{lineAfter === i && i < rows.length - 1 && priceLine}
 							</Fragment>

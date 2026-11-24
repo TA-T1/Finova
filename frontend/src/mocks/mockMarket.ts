@@ -7,14 +7,18 @@
 // the pages is visibly doing something. Prices are integers in rial.
 
 import type {
+	ChainResponse,
+	ChainSide,
+	ChainStrike,
+	ExpiryInfo,
 	Moneyness,
 	OptionQuote,
 	OptionType,
+	SymbolDetail,
 	Underlying,
-	UnderlyingDetail,
 	UnderlyingKind,
 } from "@/types/marketTypes";
-import { bsDelta, bsPrice } from "./blackScholes";
+import { bsGreeks, bsPrice } from "./blackScholes";
 
 const RATE = 0.25; // annual risk-free rate, decimal
 const CONTRACT_SIZE = 1000;
@@ -197,11 +201,12 @@ function moneyness(type: OptionType, spot: number, strike: number): Moneyness {
 	return (type === "call" && diff > 0) || (type === "put" && diff < 0) ? "ITM" : "OTM";
 }
 
+const round2 = (x: number) => Math.round(x * 100) / 100;
+
 function quoteOf(c: ContractState, nowIso: string): OptionQuote {
 	const u = underlyings.get(c.def.symbol)!;
 	const spot = u.spot;
-	const days = Math.max(c.days, 1 / 24);
-	const T = days / 365;
+	const T = Math.max(c.days, 1 / 24) / 365;
 	const sigma = clamp(c.sigma0 * (1 + c.ivNoise), 0.2, 0.8);
 
 	const fair = bsPrice(c.type, spot, c.strike, T, RATE, sigma);
@@ -210,6 +215,10 @@ function quoteOf(c: ContractState, nowIso: string): OptionQuote {
 	const ask = Math.round(last * 1.015) + 1;
 	const theo = bsPrice(c.type, spot, c.strike, T, RATE, c.def.hv);
 	const avgPrice = (last + c.prevClose) / 2;
+	const g = bsGreeks(c.type, spot, c.strike, T, RATE, sigma);
+	const intrinsic = c.type === "call" ? Math.max(spot - c.strike, 0) : Math.max(c.strike - spot, 0);
+	const breakEven = c.type === "call" ? c.strike + last : c.strike - last;
+	const leverage = spot / last;
 
 	return {
 		contractId: c.contractId,
@@ -219,7 +228,7 @@ function quoteOf(c: ContractState, nowIso: string): OptionQuote {
 		underlyingKind: c.def.kind,
 		optionType: c.type,
 		strikePrice: c.strike,
-		expiryDate: `${c.expiryDate}T00:00:00Z`,
+		expiryDate: c.expiryDate,
 		contractSize: CONTRACT_SIZE,
 		lastPrice: last,
 		closePrice: c.closePrice,
@@ -228,17 +237,32 @@ function quoteOf(c: ContractState, nowIso: string): OptionQuote {
 		volume: c.volume,
 		openInterest: c.openInterest,
 		quoteTs: nowIso,
-
 		prevClose: c.prevClose,
 		value: c.volume > 0 ? Math.round(c.volume * avgPrice * CONTRACT_SIZE) : 0,
 
-		impliedVolatility: sigma,
-		delta: bsDelta(c.type, spot, c.strike, T, RATE, sigma),
-		theoreticalPrice: Math.round(theo * 100) / 100,
-		priceGapPercent: theo > 0 ? ((last - theo) / theo) * 100 : null,
-		breakEven: c.type === "call" ? c.strike + last : c.strike - last,
-		leverage: last > 0 ? spot / last : null,
+		underlyingPrice: spot,
+		daysToExpiry: c.days,
 		moneyness: moneyness(c.type, spot, c.strike),
+		marketPrice: last,
+		priceSource: "last",
+		intrinsicValue: intrinsic,
+		timeValue: Math.max(last - intrinsic, 0),
+		breakEven,
+		breakEvenPercent: round2(((breakEven - spot) / spot) * 100),
+		leverage: round2(leverage),
+		effectiveLeverage: round2(leverage * Math.abs(g.delta)),
+		impliedVolatility: round2(sigma * 1000) / 1000,
+		historicalVolatility: c.def.hv,
+		greeksVolatility: round2(sigma * 1000) / 1000,
+		delta: round2(g.delta * 1000) / 1000,
+		gamma: g.gamma,
+		vega: round2(g.vega * 100) / 100,
+		theta: round2(g.theta * 100) / 100,
+		rho: round2(g.rho * 100) / 100,
+		theoreticalPrice: round2(theo),
+		priceGap: round2(last - theo),
+		priceGapPercent: theo > 0 ? round2(((last - theo) / theo) * 100) : null,
+		metricsTs: nowIso,
 	};
 }
 
@@ -260,33 +284,104 @@ export function listUnderlyingRows(kind?: UnderlyingKind): Underlying[] {
 	}));
 }
 
-/** Distinct expiries over all underlyings, ascending, with their contract counts. */
-export function listExpiryRows(): { expiryDate: string; contractCount: number }[] {
-	const counts = new Map<string, number>();
-	for (const c of contracts) counts.set(c.expiryDate, (counts.get(c.expiryDate) ?? 0) + 1);
+/** Distinct expiries (of one underlying, or of all), ascending, with their contract counts. */
+export function listExpiryRows(symbol?: string): (ExpiryInfo & { daysToExpiry: number })[] {
+	const counts = new Map<string, { n: number; days: number }>();
+	for (const c of contracts) {
+		if (symbol && c.def.symbol !== symbol) continue;
+		const e = counts.get(c.expiryDate) ?? { n: 0, days: c.days };
+		e.n++;
+		counts.set(c.expiryDate, e);
+	}
 	return [...counts.entries()]
 		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([expiryDate, contractCount]) => ({ expiryDate, contractCount }));
+		.map(([expiryDate, e]) => ({ expiryDate, contractCount: e.n, daysToExpiry: e.days }));
 }
 
-export function underlyingDetail(symbol: string): UnderlyingDetail | null {
+export function hasUnderlying(symbol: string): boolean {
+	return underlyings.has(symbol);
+}
+
+function side(q: OptionQuote): ChainSide {
+	const {
+		contractId, symbol, lastPrice, closePrice, bestBid, bestAsk, volume, openInterest, quoteTs, prevClose, value,
+		moneyness: m, marketPrice, priceSource, intrinsicValue, timeValue, breakEven, breakEvenPercent, leverage,
+		effectiveLeverage, impliedVolatility, historicalVolatility, greeksVolatility, delta, gamma, vega, theta, rho,
+		theoreticalPrice, priceGap, priceGapPercent, metricsTs,
+	} = q;
+	return {
+		contractId, symbol, lastPrice, closePrice, bestBid, bestAsk, volume, openInterest, quoteTs, prevClose, value,
+		moneyness: m, marketPrice, priceSource, intrinsicValue, timeValue, breakEven, breakEvenPercent, leverage,
+		effectiveLeverage, impliedVolatility, historicalVolatility, greeksVolatility, delta, gamma, vega, theta, rho,
+		theoreticalPrice, priceGap, priceGapPercent, metricsTs,
+	};
+}
+
+/** The chain of one underlying and expiry, or null when it has no contracts. */
+export function chainOf(symbol: string, expiry: string): ChainResponse | null {
+	const rows = snapshot().filter((r) => r.underlyingSymbol === symbol && r.expiryDate === expiry);
+	if (rows.length === 0) return null;
+	const byStrike = new Map<number, ChainStrike>();
+	for (const q of rows) {
+		const row = byStrike.get(q.strikePrice) ?? { strikePrice: q.strikePrice, call: null, put: null };
+		row[q.optionType] = side(q);
+		byStrike.set(q.strikePrice, row);
+	}
+	return {
+		underlyingSymbol: symbol,
+		expiryDate: expiry,
+		daysToExpiry: rows[0].daysToExpiry,
+		underlyingPrice: rows[0].underlyingPrice,
+		strikes: [...byStrike.values()].sort((a, b) => a.strikePrice - b.strikePrice),
+	};
+}
+
+/** The symbol page of one underlying, or null when it has no contracts. */
+export function symbolDetail(symbol: string): SymbolDetail | null {
 	tick();
 	const u = underlyings.get(symbol);
 	if (!u) return null;
-	const d = u.def;
-	const expiryDates = [
-		...new Set(contracts.filter((c) => c.def === d).map((c) => c.expiryDate)),
-	].sort();
+	const mine = snapshot().filter((r) => r.underlyingSymbol === symbol);
+	const calls = mine.filter((r) => r.optionType === "call").reduce((a, r) => a + (r.openInterest ?? 0), 0);
+	const puts = mine.filter((r) => r.optionType === "put").reduce((a, r) => a + (r.openInterest ?? 0), 0);
+
+	const strikes = new Map<number, { call: number; put: number }>();
+	for (const r of mine) {
+		const e = strikes.get(r.strikePrice) ?? { call: 0, put: 0 };
+		e[r.optionType] += r.openInterest ?? 0;
+		strikes.set(r.strikePrice, e);
+	}
+
+	// Max pain of the nearest expiry: the strike where the open interest pays out least.
+	const expiries = listExpiryRows(symbol);
+	const near = expiries[0];
+	let maxPain: SymbolDetail["maxPain"] = null;
+	if (near) {
+		const rows = mine.filter((r) => r.expiryDate === near.expiryDate);
+		let best: { strikePrice: number; totalPayout: number } | null = null;
+		for (const k of new Set(rows.map((r) => r.strikePrice))) {
+			let payout = 0;
+			for (const r of rows) {
+				const itm = r.optionType === "call" ? Math.max(k - r.strikePrice, 0) : Math.max(r.strikePrice - k, 0);
+				payout += itm * (r.openInterest ?? 0) * CONTRACT_SIZE;
+			}
+			if (!best || payout < best.totalPayout) best = { strikePrice: k, totalPayout: payout };
+		}
+		if (best) maxPain = { expiryDate: near.expiryDate, ...best };
+	}
+
 	return {
-		id: d.id,
-		symbol: d.symbol,
-		name: d.name,
-		isin: d.isin,
-		insCode: d.insCode,
-		kind: d.kind,
-		lastPrice: u.spot,
-		closePrice: u.closePrice,
-		prevClose: u.prevClose,
-		expiryDates,
+		symbol: u.def.symbol,
+		name: u.def.name,
+		kind: u.def.kind,
+		price: u.spot,
+		priceChange: u.spot - u.prevClose,
+		priceChangePercent: round2(((u.spot - u.prevClose) / u.prevClose) * 100),
+		expiries: expiries.map(({ expiryDate, contractCount }) => ({ expiryDate, contractCount })),
+		openInterest: { calls, puts, pcr: calls > 0 ? Math.round((puts / calls) * 1000) / 1000 : null },
+		strikeOpenInterest: [...strikes.entries()]
+			.sort(([a], [b]) => a - b)
+			.map(([strikePrice, e]) => ({ strikePrice, callOpenInterest: e.call, putOpenInterest: e.put })),
+		maxPain,
 	};
 }

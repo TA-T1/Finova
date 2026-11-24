@@ -6,6 +6,8 @@ import AppLayout from "@/layouts/AppLayout/AppLayout";
 import MarketWatchPage from "@/pages/MarketWatch/MarketWatchPage";
 import ChainPage from "@/pages/Chain/ChainPage";
 import SymbolPage from "@/pages/Symbol/SymbolPage";
+import StrategyPage from "@/pages/Strategy/StrategyPage";
+import BacktestPage from "@/pages/Backtest/BacktestPage";
 
 export const router = createBrowserRouter([
 	{
@@ -36,6 +38,8 @@ export const router = createBrowserRouter([
 			{ path: "/market-watch", element: <MarketWatchPage /> },
 			{ path: "/chain", element: <ChainPage /> },
 			{ path: "/symbol/:symbol", element: <SymbolPage /> },
+			{ path: "/strategy", element: <StrategyPage /> },
+			{ path: "/backtests", element: <BacktestPage /> },
 		],
 	},
 	// {

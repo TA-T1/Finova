@@ -1,26 +1,9 @@
-import type { OptionQuote, OptionType } from "@/types/marketTypes";
+import type { OptionType } from "@/types/marketTypes";
 
 /** A call is in the money when strike < underlying price; a put when strike > price. */
 export function isInTheMoney(type: OptionType, strike: number, underlyingPrice: number | null): boolean {
 	if (underlyingPrice === null) return false;
 	return type === "call" ? strike < underlyingPrice : strike > underlyingPrice;
-}
-
-export interface StrikeRow {
-	strike: number;
-	call?: OptionQuote;
-	put?: OptionQuote;
-}
-
-/** Pairs the call and the put of each strike, ascending by strike. */
-export function pairByStrike(items: OptionQuote[]): StrikeRow[] {
-	const map = new Map<number, StrikeRow>();
-	for (const q of items) {
-		const row = map.get(q.strikePrice) ?? { strike: q.strikePrice };
-		row[q.optionType] = q;
-		map.set(q.strikePrice, row);
-	}
-	return [...map.values()].sort((a, b) => a.strike - b.strike);
 }
 
 /**

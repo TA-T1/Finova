@@ -5,9 +5,9 @@ import { EmptyState, ErrorState, StaleBanner, TableSkeleton } from "@/components
 import NumberCell from "@/components/Custom/NumberCell";
 import RefreshIndicator from "@/components/Custom/RefreshIndicator";
 import SearchableSelect from "@/components/Custom/SearchableSelect";
-import { REFRESH_MS, useChain, useUnderlying, useUnderlyings } from "@/hooks/useMarketQueries";
+import { REFRESH_MS, useChain, useSymbol, useUnderlyings } from "@/hooks/useMarketQueries";
 import { getErrorMessage } from "@/services/marketService";
-import { changePercent, daysLeft, formatInt, formatJalaliLong, ymd } from "@/utils/format";
+import { daysLeft, formatInt, formatJalaliLong, ymd } from "@/utils/format";
 import ChainTable from "./ChainTable";
 
 /** The soonest expiry that has not passed; if all have passed, the first. */
@@ -46,8 +46,8 @@ export default function ChainPage() {
 		if (!symbolParam && symbol) setQuery({ symbol }, true);
 	}, [symbolParam, symbol, setQuery]);
 
-	const detail = useUnderlying(symbol);
-	const expiryDates = detail.data?.expiryDates;
+	const detail = useSymbol(symbol);
+	const expiryDates = detail.data?.expiries.map((e) => e.expiryDate);
 
 	// No expiry, or one this underlying does not have: use the nearest.
 	const expiry = expiryParam && expiryDates?.includes(expiryParam) ? expiryParam : undefined;
@@ -73,27 +73,27 @@ export default function ChainPage() {
 	};
 
 	const u = detail.data;
-	const price = u?.lastPrice ?? null;
-	const change = u ? changePercent(u.lastPrice, u.prevClose) : null;
-	const days = expiry ? daysLeft(expiry) : null;
-	const items = chain.data?.items;
+	const price = chain.data?.underlyingPrice ?? u?.price ?? null;
+	const change = u?.priceChangePercent ?? null;
+	const days = chain.data?.daysToExpiry ?? (expiry ? daysLeft(expiry) : null);
+	const strikes = chain.data?.strikes;
 
 	let body;
-	const fatal = (!underlyings.data && underlyings.isError && underlyings) || (!u && detail.isError && detail) || (!items && chain.isError && chain);
+	const fatal = (!underlyings.data && underlyings.isError && underlyings) || (!u && detail.isError && detail) || (!strikes && chain.isError && chain);
 	if (fatal) {
 		body = <ErrorState message={getErrorMessage(fatal.error)} onRetry={refetchAll} retrying={fatal.isFetching} />;
 	} else if (!symbol && underlyings.data) {
 		body = <EmptyState title="دارایی پایه‌ای برای نمایش وجود ندارد" hint="هنوز داده‌ای ثبت نشده است." />;
-	} else if (!items) {
+	} else if (!strikes) {
 		body = <TableSkeleton rows={9} cols={9} />;
-	} else if (items.length === 0) {
+	} else if (strikes.length === 0) {
 		body = <EmptyState title="قراردادی برای این سررسید پیدا نشد" hint="دارایی پایه یا سررسید دیگری را انتخاب کنید." />;
 	} else {
 		const err = chain.isError ? chain : detail.isError ? detail : null;
 		body = (
 			<>
 				{err && <StaleBanner message={getErrorMessage(err.error)} onRetry={refetchAll} />}
-				<ChainTable items={items} underlyingPrice={price} loading={chain.isPlaceholderData} />
+				<ChainTable strikes={strikes} underlyingPrice={price} loading={chain.isPlaceholderData} />
 			</>
 		);
 	}
@@ -168,7 +168,7 @@ export default function ChainPage() {
 			</section>
 
 			<section aria-label="جدول زنجیره" className="relative overflow-hidden rounded-lg border border-neutral-200 bg-white">
-				{(detail.isFetching || chain.isFetching) && items && (
+				{(detail.isFetching || chain.isFetching) && strikes && (
 					<div className="absolute inset-x-0 top-0 z-40 h-0.5 animate-pulse bg-sky-500" aria-hidden />
 				)}
 				{body}

@@ -1,17 +1,24 @@
-// Data hooks for the market pages. All of them refresh every 30 seconds and
-// stop while the browser tab is hidden (TanStack Query only refetches on an
-// interval while the tab is visible, because refetchIntervalInBackground is
-// false). `dataUpdatedAt` of the result is the "last updated" time.
+// Data hooks. The market ones refresh every 30 seconds and stop while the browser
+// tab is hidden (TanStack Query only refetches on an interval while the tab is
+// visible, because refetchIntervalInBackground is false). `dataUpdatedAt` of the
+// result is the "last updated" time.
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
+	analyzeStrategy,
+	getBacktest,
+	getBacktests,
 	getChain,
 	getExpiries,
 	getMarketWatch,
-	getUnderlying,
+	getStatus,
+	getStrategyTemplates,
+	getSymbol,
 	getUnderlyings,
 } from "@/services/marketService";
+import type { BacktestParams } from "@/types/backtestTypes";
 import type { MarketWatchParams } from "@/types/marketTypes";
+import type { LegInput } from "@/types/strategyTypes";
 
 export const REFRESH_MS = 30_000;
 
@@ -19,6 +26,10 @@ const live = {
 	refetchInterval: REFRESH_MS,
 	refetchIntervalInBackground: false,
 } as const;
+
+export function useMarketStatus() {
+	return useQuery({ queryKey: ["marketStatus"], queryFn: getStatus, ...live });
+}
 
 export function useMarketWatch(params: MarketWatchParams) {
 	return useQuery({
@@ -39,19 +50,20 @@ export function useUnderlyings() {
 	});
 }
 
-/** The expiry filter list. Changes rarely: no auto-refresh. */
-export function useExpiries() {
+/** The expiries of one underlying, or of the whole market. Changes rarely: no auto-refresh. */
+export function useExpiries(underlying?: string) {
 	return useQuery({
-		queryKey: ["expiries"],
-		queryFn: () => getExpiries(),
+		queryKey: ["expiries", underlying ?? null],
+		queryFn: () => getExpiries(underlying),
 		staleTime: 5 * 60_000,
 	});
 }
 
-export function useUnderlying(symbol: string | undefined) {
+/** The symbol page data: price, expiries, open interest, max pain. */
+export function useSymbol(symbol: string | undefined) {
 	return useQuery({
-		queryKey: ["underlying", symbol],
-		queryFn: () => getUnderlying(symbol!),
+		queryKey: ["symbol", symbol],
+		queryFn: () => getSymbol(symbol!),
 		enabled: !!symbol,
 		...live,
 	});
@@ -64,5 +76,39 @@ export function useChain(symbol: string | undefined, expiry: string | undefined)
 		enabled: !!symbol && !!expiry,
 		placeholderData: keepPreviousData,
 		...live,
+	});
+}
+
+export function useStrategyTemplates() {
+	return useQuery({ queryKey: ["strategyTemplates"], queryFn: getStrategyTemplates, staleTime: 60 * 60_000 });
+}
+
+/** Analysis of the legs being edited. Runs when they change, not on a timer. */
+export function useStrategyAnalysis(legs: LegInput[]) {
+	return useQuery({
+		queryKey: ["strategyAnalysis", legs],
+		queryFn: () => analyzeStrategy(legs),
+		enabled: legs.length > 0,
+		placeholderData: keepPreviousData,
+		staleTime: 15_000,
+		retry: false,
+	});
+}
+
+export function useBacktests(params: BacktestParams) {
+	return useQuery({
+		queryKey: ["backtests", params],
+		queryFn: () => getBacktests(params),
+		placeholderData: keepPreviousData,
+		staleTime: 60_000,
+	});
+}
+
+export function useBacktest(id: number | undefined) {
+	return useQuery({
+		queryKey: ["backtest", id],
+		queryFn: () => getBacktest(id!),
+		enabled: id !== undefined,
+		staleTime: 5 * 60_000,
 	});
 }

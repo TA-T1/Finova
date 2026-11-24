@@ -14,7 +14,8 @@ interface Column {
 	label: string;
 	/** Header text under the label, e.g. the second value of a combined column. */
 	sub?: string;
-	sortKey: MarketSortKey;
+	/** The field sent as `sort`; missing when the API cannot sort by this column. */
+	sortKey?: MarketSortKey;
 	/** The first column stays in view while the table scrolls sideways. */
 	sticky?: boolean;
 	cell: (q: OptionQuote) => ReactNode;
@@ -44,7 +45,7 @@ const COLUMNS: Column[] = [
 	{
 		id: "expiry", label: "سررسید", sub: "روز باقی‌مانده", sortKey: "expiryDate",
 		cell: (q) => {
-			const d = daysLeft(q.expiryDate);
+			const d = q.daysToExpiry ?? daysLeft(q.expiryDate);
 			return (
 				<div className="leading-tight">
 					<div className="tabular-nums">{formatJalali(q.expiryDate)}</div>
@@ -65,7 +66,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{
-		id: "bidask", label: "بهترین خرید", sub: "بهترین فروش", sortKey: "bestBid",
+		id: "bidask", label: "بهترین خرید", sub: "بهترین فروش",
 		cell: (q) => (
 			<div className="leading-tight">
 				<NumberCell value={q.bestBid} className="text-emerald-700" />
@@ -74,7 +75,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{ id: "volume", label: "حجم", sortKey: "volume", cell: (q) => <NumberCell value={q.volume} /> },
-	{ id: "value", label: "ارزش معاملات", sortKey: "value", cell: (q) => <NumberCell value={q.value} kind="compact" /> },
+	{ id: "value", label: "ارزش معاملات", cell: (q) => <NumberCell value={q.value} kind="compact" /> },
 	{ id: "oi", label: "موقعیت‌های باز", sortKey: "openInterest", cell: (q) => <NumberCell value={q.openInterest} /> },
 	{ id: "iv", label: "نوسان ضمنی", sub: "IV", sortKey: "impliedVolatility", cell: (q) => <NumberCell value={q.impliedVolatility} kind="fraction" /> },
 	{ id: "delta", label: "دلتا", sortKey: "delta", cell: (q) => <NumberCell value={q.delta} kind="decimal" digits={2} /> },
@@ -89,56 +90,71 @@ const COLUMNS: Column[] = [
 			</div>
 		),
 	},
-	{ id: "be", label: "نقطه سر‌به‌سر", sortKey: "breakEven", cell: (q) => <NumberCell value={q.breakEven} /> },
+	{
+		id: "be", label: "نقطه سر‌به‌سر", sub: "فاصله از قیمت پایه٪", sortKey: "breakEvenPercent",
+		cell: (q) => (
+			<div className="leading-tight">
+				<NumberCell value={q.breakEven} />
+				<div className="text-xs"><ChangeBadge value={q.breakEvenPercent} digits={1} /></div>
+			</div>
+		),
+	},
 	{ id: "lev", label: "اهرم", sortKey: "leverage", cell: (q) => <NumberCell value={q.leverage} kind="decimal" digits={1} /> },
-	{ id: "status", label: "وضعیت", sub: "ITM / OTM", sortKey: "moneyness", cell: (q) => <MoneynessBadge value={q.moneyness} /> },
+	{ id: "status", label: "وضعیت", sub: "ITM / OTM", cell: (q) => <MoneynessBadge value={q.moneyness} /> },
 ];
 
 interface Props {
 	rows: OptionQuote[];
-	sortBy: MarketSortKey;
-	sortDir: SortDir;
+	sort: MarketSortKey;
+	order: SortDir;
 	onSort: (key: MarketSortKey) => void;
 	/** Dim the rows while a new page or sort is loading. */
 	loading?: boolean;
 }
 
-export default function MarketWatchTable({ rows, sortBy, sortDir, onSort, loading }: Props) {
+export default function MarketWatchTable({ rows, sort, order, onSort, loading }: Props) {
 	return (
 		<div className="max-h-[68vh] overflow-auto">
 			<table className={cn("w-full min-w-[1500px] border-separate border-spacing-0 text-sm", loading && "opacity-60 transition-opacity")}>
 				<thead>
 					<tr>
 						{COLUMNS.map((c) => {
-							const active = c.sortKey === sortBy;
+							const active = !!c.sortKey && c.sortKey === sort;
 							return (
 								<th
 									key={c.id}
 									scope="col"
-									aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+									aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"}
 									className={cn(
 										"sticky top-0 border-b border-neutral-200 bg-neutral-50 px-3 py-2 text-start align-bottom text-xs font-semibold whitespace-nowrap text-neutral-600",
 										c.sticky ? "start-0 z-30 border-e" : "z-20",
 									)}
 								>
-									<button
-										type="button"
-										onClick={() => onSort(c.sortKey)}
-										className={cn(
-											"inline-flex cursor-pointer items-center gap-1 text-start hover:text-sky-700",
-											active && "text-sky-700",
-										)}
-									>
+									{c.sortKey ? (
+										<button
+											type="button"
+											onClick={() => onSort(c.sortKey!)}
+											className={cn(
+												"inline-flex cursor-pointer items-center gap-1 text-start hover:text-sky-700",
+												active && "text-sky-700",
+											)}
+										>
+											<span className="leading-tight">
+												{c.label}
+												{c.sub && <span className="block font-normal text-neutral-400">{c.sub}</span>}
+											</span>
+											{active ? (
+												order === "asc" ? <ChevronUp className="size-3.5" aria-hidden /> : <ChevronDown className="size-3.5" aria-hidden />
+											) : (
+												<ChevronsUpDown className="size-3.5 text-neutral-300" aria-hidden />
+											)}
+										</button>
+									) : (
 										<span className="leading-tight">
 											{c.label}
 											{c.sub && <span className="block font-normal text-neutral-400">{c.sub}</span>}
 										</span>
-										{active ? (
-											sortDir === "asc" ? <ChevronUp className="size-3.5" aria-hidden /> : <ChevronDown className="size-3.5" aria-hidden />
-										) : (
-											<ChevronsUpDown className="size-3.5 text-neutral-300" aria-hidden />
-										)}
-									</button>
+									)}
 								</th>
 							);
 						})}

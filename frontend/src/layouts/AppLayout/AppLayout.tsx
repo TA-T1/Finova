@@ -5,6 +5,8 @@ import { USE_MOCK } from "@/services/marketService";
 const NAV = [
 	{ to: "/market-watch", label: "دیده‌بان بازار" },
 	{ to: "/chain", label: "زنجیره اختیار" },
+	{ to: "/strategy", label: "ساخت استراتژی" },
+	{ to: "/backtests", label: "بک‌تست" },
 ];
 
 /** Shell for the market pages: a top bar with the menu, then the page. */

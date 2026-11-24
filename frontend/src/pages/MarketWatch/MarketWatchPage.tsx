@@ -3,27 +3,27 @@ import { EmptyState, ErrorState, StaleBanner, TableSkeleton } from "@/components
 import Pagination from "@/components/Custom/Pagination";
 import RefreshIndicator from "@/components/Custom/RefreshIndicator";
 import SearchableSelect from "@/components/Custom/SearchableSelect";
-import { REFRESH_MS, useExpiries, useMarketWatch, useUnderlyings } from "@/hooks/useMarketQueries";
+import { REFRESH_MS, useExpiries, useMarketStatus, useMarketWatch, useUnderlyings } from "@/hooks/useMarketQueries";
 import { cn } from "@/lib/utils";
 import { getErrorMessage } from "@/services/marketService";
 import type { MarketSortKey, MarketWatchParams, OptionType, SortDir } from "@/types/marketTypes";
-import { daysLeft, formatInt, formatJalaliLong } from "@/utils/format";
+import { formatInt, formatJalaliLong, formatTime } from "@/utils/format";
 import MarketWatchTable from "./MarketWatchTable";
 
 /** Numbers are most useful biggest-first, so their first click sorts descending. */
-const TEXT_KEYS: MarketSortKey[] = ["symbol", "underlyingSymbol", "optionType", "expiryDate", "moneyness"];
+const TEXT_KEYS: MarketSortKey[] = ["symbol", "underlyingSymbol", "optionType", "expiryDate"];
 
 interface State {
 	underlying?: string;
 	type?: OptionType;
 	expiry?: string;
-	sortBy: MarketSortKey;
-	sortDir: SortDir;
+	sort: MarketSortKey;
+	order: SortDir;
 	page: number;
 	pageSize: number;
 }
 
-const INITIAL: State = { sortBy: "volume", sortDir: "desc", page: 1, pageSize: 25 };
+const INITIAL: State = { sort: "volume", order: "desc", page: 1, pageSize: 25 };
 
 const TYPE_TABS: { value: OptionType | undefined; label: string }[] = [
 	{ value: undefined, label: "همه" },
@@ -40,15 +40,16 @@ export default function MarketWatchPage() {
 		underlying: s.underlying,
 		type: s.type,
 		expiry: s.expiry,
-		sortBy: s.sortBy,
-		sortDir: s.sortDir,
+		sort: s.sort,
+		order: s.order,
 		page: s.page,
 		pageSize: s.pageSize,
 	};
 
 	const watch = useMarketWatch(params);
 	const underlyings = useUnderlyings();
-	const expiries = useExpiries();
+	const expiries = useExpiries(s.underlying);
+	const status = useMarketStatus();
 
 	const underlyingOptions = useMemo(
 		() => (underlyings.data?.items ?? []).map((u) => ({ value: u.symbol, label: u.symbol, hint: u.name ?? undefined })),
@@ -56,8 +57,8 @@ export default function MarketWatchPage() {
 	);
 
 	const onSort = (key: MarketSortKey) => {
-		if (key === s.sortBy) update({ sortDir: s.sortDir === "asc" ? "desc" : "asc" });
-		else update({ sortBy: key, sortDir: TEXT_KEYS.includes(key) ? "asc" : "desc" });
+		if (key === s.sort) update({ order: s.order === "asc" ? "desc" : "asc" });
+		else update({ sort: key, order: TEXT_KEYS.includes(key) ? "asc" : "desc" });
 	};
 
 	const filtered = !!(s.underlying || s.type || s.expiry);
@@ -79,7 +80,7 @@ export default function MarketWatchPage() {
 		body = (
 			<>
 				{watch.isError && <StaleBanner message={getErrorMessage(watch.error)} onRetry={() => watch.refetch()} />}
-				<MarketWatchTable rows={data.items} sortBy={s.sortBy} sortDir={s.sortDir} onSort={onSort} loading={watch.isPlaceholderData} />
+				<MarketWatchTable rows={data.items} sort={s.sort} order={s.order} onSort={onSort} loading={watch.isPlaceholderData} />
 				<Pagination
 					page={data.page}
 					pageSize={data.pageSize}
@@ -100,12 +101,30 @@ export default function MarketWatchPage() {
 						همه قراردادها با قیمت، حجم و شاخص‌های محاسبه‌شده. <b className="font-medium text-neutral-700">قیمت‌ها به ریال</b> هستند.
 					</p>
 				</div>
+				<div className="flex flex-wrap items-center gap-3">
+					{status.data && (
+						<span
+							className={cn(
+								"rounded-full px-2.5 py-0.5 text-xs font-medium ring-1 ring-inset",
+								status.data.marketOpen
+									? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+									: "bg-neutral-100 text-neutral-600 ring-neutral-200",
+							)}
+							title={status.data.lastUpdate ? `آخرین قیمت ثبت‌شده: ${formatTime(Date.parse(status.data.lastUpdate))}` : undefined}
+						>
+							{status.data.marketOpen ? "بازار باز است" : "بازار بسته است"}
+							{status.data.lastUpdate && !status.data.marketOpen && (
+								<span className="ms-1 tabular-nums">· آخرین به‌روزرسانی {formatTime(Date.parse(status.data.lastUpdate))}</span>
+							)}
+						</span>
+					)}
 				<RefreshIndicator
 					updatedAt={watch.dataUpdatedAt}
 					isFetching={watch.isFetching}
 					onRefresh={() => watch.refetch()}
 					intervalMs={REFRESH_MS}
 				/>
+				</div>
 			</header>
 
 			<section aria-label="فیلترها" className="flex flex-wrap items-end gap-x-5 gap-y-3 rounded-lg border border-neutral-200 bg-white p-3">
@@ -151,7 +170,7 @@ export default function MarketWatchPage() {
 						<option value="">همه سررسیدها</option>
 						{(expiries.data?.items ?? []).map((e) => (
 							<option key={e.expiryDate} value={e.expiryDate}>
-								{formatJalaliLong(e.expiryDate)} ({formatInt(daysLeft(e.expiryDate))} روز)
+								{formatJalaliLong(e.expiryDate)} ({formatInt(e.daysToExpiry)} روز)
 							</option>
 						))}
 					</select>
