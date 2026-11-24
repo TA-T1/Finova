@@ -51,7 +51,7 @@ func testDB(t *testing.T) *pgxpool.Pool {
 		admin.Close()
 	})
 
-	ddl, err := os.ReadFile("../../migrations/000007_quote_snapshots.up.sql")
+	ddl, err := os.ReadFile("../../migrations/000008_quote_snapshots.up.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

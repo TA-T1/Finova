@@ -129,15 +129,32 @@ func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts t
 }
 
 // InsertUnderlyingQuote writes a quote snapshot for an underlying at ts.
-func (r *Repository) InsertUnderlyingQuote(ctx context.Context, underlyingID int, ts time.Time, last, close int64) error {
+func (r *Repository) InsertUnderlyingQuote(ctx context.Context, underlyingID int, ts time.Time, last, close, prevClose int64) error {
 	const q = `
-		INSERT INTO underlying_quotes (underlying_id, ts, last_price, close_price, volume)
-		VALUES ($1, $2, $3, $4, NULL)
+		INSERT INTO underlying_quotes (underlying_id, ts, last_price, close_price, prev_close, volume)
+		VALUES ($1, $2, $3, $4, $5, NULL)
 		ON CONFLICT (underlying_id, ts) DO UPDATE SET
 			last_price  = EXCLUDED.last_price,
-			close_price = EXCLUDED.close_price`
-	_, err := r.db.Exec(ctx, q, underlyingID, ts, last, close)
+			close_price = EXCLUDED.close_price,
+			prev_close  = EXCLUDED.prev_close`
+	_, err := r.db.Exec(ctx, q, underlyingID, ts, last, close, prevClose)
 	return err
+}
+
+// LastMarketUpdate returns the timestamp of the most recently persisted quote.
+func (r *Repository) LastMarketUpdate(ctx context.Context) (*time.Time, error) {
+	const q = `
+		SELECT MAX(ts)
+		FROM (
+			SELECT ts FROM option_quotes
+			UNION ALL
+			SELECT ts FROM underlying_quotes
+		) market_quotes`
+	var latest *time.Time
+	if err := r.db.QueryRow(ctx, q).Scan(&latest); err != nil {
+		return nil, err
+	}
+	return latest, nil
 }
 
 // UpsertDailyPrice writes one end-of-day record for an underlying.

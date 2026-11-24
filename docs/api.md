@@ -57,6 +57,22 @@ behind the same interface so they can be fleshed out later without wider changes
 | `POST` | `/market/collect/daily/:insCode?adjusted=true` | Backfill an underlying's daily history |
 | `GET`  | `/market/options?underlying=<sym>&type=call\|put&underlyingKind=stock\|fund\|index\|other&limit=<n>` | Stored contracts joined with their latest quote |
 | `GET`  | `/market/underlyings?kind=stock\|fund\|index\|other` | Known underlyings (optionally filtered by kind) |
+| `GET`  | `/market/chain?underlying=<sym>&expiry=YYYY-MM-DD` | One expiry's strike rows, pairing each listed call and put |
+| `GET`  | `/market/symbol/:symbol` | Underlying quote, active expiries, open-interest summary/chart data, and max pain |
+
+The chain response has a `strikes` array; each row contains `strikePrice` and a
+`call` and/or `put` object (a missing side is `null`). Expiries are Gregorian
+dates. Both endpoints include only expiries on or after the current date in
+Asia/Tehran. The symbol page's `openInterest` totals use the latest quote per
+contract; `pcr` is put OI divided by call OI and is `null` when call OI is zero.
+Its `strikeOpenInterest` values aggregate all active expiries. `maxPain` uses
+the nearest active expiry and the strike with the lowest total intrinsic
+expiration payout, weighting each contract by open interest and contract size.
+
+Underlying `priceChange` is last price minus the previous close, and
+`priceChangePercent` is relative to that previous close. Newly collected
+underlying quotes persist the TSETMC previous-close field; older quotes keep a
+null previous close until refreshed.
 
 ### Underlying classification (اختیار سهام vs. others)
 
@@ -214,7 +230,7 @@ What this means for the Sprint 3 backfill:
 ## Daily end-of-day snapshot (`cmd/snapshot`, `internal/snapshot`)
 
 `quote_snapshots` keeps one row per contract per trading day (migration
-`000007_quote_snapshots`; **new migration, the backend team should review it**).
+`000008_quote_snapshots`; **new migration, the backend team should review it**).
 `option_quotes` holds intraday ticks only, so this table is our real price history for the backtest.
 It may be the only history we get (see "Historical option prices" above: history exists for about the last 60 days of current contracts, without bid/ask/open interest).
 

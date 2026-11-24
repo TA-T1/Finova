@@ -41,7 +41,10 @@ type CollectResult struct {
 // contracts and quotes. Per-row failures are counted and skipped rather than
 // aborting the whole pass; a failure to fetch the chain at all is returned.
 func (c *Collector) CollectOptionChain(ctx context.Context) (CollectResult, error) {
-	res := CollectResult{Source: c.src.Name(), TS: time.Now().Truncate(time.Minute)}
+	res := CollectResult{Source: c.src.Name(), TS: time.Now()}
+	if !MarketOpenAt(res.TS) {
+		return res, ErrMarketClosed
+	}
 
 	rows, err := c.src.OptionMarketWatch(ctx)
 	if err != nil {
@@ -79,7 +82,7 @@ func (c *Collector) CollectOptionChain(ctx context.Context) (CollectResult, erro
 		}
 
 		if !quotedUnderlyings[row.UnderlyingInsCode] {
-			if err := c.repo.InsertUnderlyingQuote(ctx, uid, res.TS, row.UnderlyingLast, row.UnderlyingClose); err != nil {
+			if err := c.repo.InsertUnderlyingQuote(ctx, uid, res.TS, row.UnderlyingLast, row.UnderlyingClose, row.UnderlyingYesterday); err != nil {
 				note(fmt.Errorf("underlying quote %s: %w", row.UnderlyingInsCode, err))
 			} else {
 				quotedUnderlyings[row.UnderlyingInsCode] = true
@@ -176,6 +179,9 @@ func (c *Collector) Run(ctx context.Context, interval time.Duration) {
 	c.log.Info("market collector started", "source", c.src.Name(), "interval", interval.String())
 
 	tick := func() {
+		if !MarketOpenAt(time.Now()) {
+			return
+		}
 		cctx, cancel := context.WithTimeout(ctx, interval)
 		defer cancel()
 		if _, err := c.CollectOptionChain(cctx); err != nil {
