@@ -215,6 +215,7 @@ type dailyPriceRow struct {
 	PDrCotVal  flexInt `json:"pDrCotVal"`
 	Volume     flexInt `json:"qTotTran5J"`
 	Value      flexInt `json:"qTotCap"`
+	TradeCount flexInt `json:"zTotTran"`
 }
 
 // DailyPrices implements datasource.Source.
@@ -240,14 +241,15 @@ func (c *Client) DailyPrices(ctx context.Context, insCode string, adjusted bool)
 			continue
 		}
 		out = append(out, datasource.DailyPrice{
-			Date:   date,
-			Open:   int64(d.PriceFirst),
-			High:   int64(d.PriceMax),
-			Low:    int64(d.PriceMin),
-			Close:  int64(d.PDrCotVal),
-			Final:  int64(d.PClosing),
-			Volume: int64(d.Volume),
-			Value:  int64(d.Value),
+			Date:       date,
+			Open:       int64(d.PriceFirst),
+			High:       int64(d.PriceMax),
+			Low:        int64(d.PriceMin),
+			Close:      int64(d.PDrCotVal),
+			Final:      int64(d.PClosing),
+			Volume:     int64(d.Volume),
+			Value:      int64(d.Value),
+			TradeCount: int64(d.TradeCount),
 		})
 	}
 	return out, nil

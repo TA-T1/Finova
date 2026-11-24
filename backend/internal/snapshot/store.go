@@ -62,7 +62,7 @@ var stageColumns = []string{
 	"open_interest", "underlying_price", "captured_at",
 }
 
-const mergeSQL = `
+const mergeHead = `
 INSERT INTO quote_snapshots (
 	trade_date, contract_symbol, underlying_symbol, option_type, strike, expiry,
 	close_price, last_price, bid_price, ask_price, volume, value, trade_count,
@@ -71,7 +71,9 @@ SELECT trade_date::date, contract_symbol, underlying_symbol, option_type, strike
 	close_price, last_price, bid_price, ask_price, volume, value, trade_count,
 	open_interest, underlying_price, captured_at
 FROM snapshot_stage
-ON CONFLICT (trade_date, contract_symbol) DO UPDATE SET
+ON CONFLICT (trade_date, contract_symbol) `
+
+const mergeUpdate = `DO UPDATE SET
 	underlying_symbol = EXCLUDED.underlying_symbol,
 	option_type       = EXCLUDED.option_type,
 	strike            = EXCLUDED.strike,
@@ -87,9 +89,23 @@ ON CONFLICT (trade_date, contract_symbol) DO UPDATE SET
 	underlying_price  = EXCLUDED.underlying_price,
 	captured_at       = EXCLUDED.captured_at`
 
+const mergeSkip = `DO NOTHING`
+
 // upsert writes all rows in one transaction (COPY + one merge statement) and
 // returns the number of rows inserted or updated.
 func upsert(ctx context.Context, db *pgxpool.Pool, rows []Row) (int, error) {
+	return write(ctx, db, rows, mergeHead+mergeUpdate)
+}
+
+// InsertMissing writes the rows that do not exist yet and leaves existing
+// (trade_date, contract_symbol) rows untouched. The history backfill uses it so
+// that it never overwrites a live snapshot, which has bid, ask and open interest.
+// It returns the number of rows inserted.
+func InsertMissing(ctx context.Context, db *pgxpool.Pool, rows []Row) (int, error) {
+	return write(ctx, db, rows, mergeHead+mergeSkip)
+}
+
+func write(ctx context.Context, db *pgxpool.Pool, rows []Row, mergeSQL string) (int, error) {
 	tx, err := db.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("snapshot: begin transaction: %w", err)
