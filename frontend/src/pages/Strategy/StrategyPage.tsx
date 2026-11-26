@@ -7,7 +7,7 @@ import NumberCell from "@/components/Custom/NumberCell";
 import SearchableSelect from "@/components/Custom/SearchableSelect";
 import { useChain, useStrategyAnalysis, useStrategyTemplates, useSymbol, useUnderlyings } from "@/hooks/useMarketQueries";
 import { cn } from "@/lib/utils";
-import { buildStrategy, getErrorMessage } from "@/services/marketService";
+import { buildStrategy, getErrorMessage, STRATEGY_MOCK } from "@/services/marketService";
 import type { LegInput, LegType, Side, StrategyLeg } from "@/types/strategyTypes";
 import { daysLeft, formatCompact, formatDecimal, formatInt, formatJalaliLong } from "@/utils/format";
 
@@ -41,14 +41,17 @@ const money = (v: number | null, unlimited: string) => (v === null ? unlimited :
 
 export default function StrategyPage() {
 	const [params, setParams] = useSearchParams();
-	const underlyings = useUnderlyings();
+	const underlyings = useUnderlyings(STRATEGY_MOCK);
 	const templates = useStrategyTemplates();
-	const symbol = params.get("symbol") ?? underlyings.data?.items[0]?.symbol;
-	const detail = useSymbol(symbol);
+	// A symbol this data source does not know (a link from a page on real data) falls back to the first.
+	const wanted = params.get("symbol");
+	const list = underlyings.data?.items;
+	const symbol = list?.find((u) => u.symbol === wanted)?.symbol ?? list?.[0]?.symbol;
+	const detail = useSymbol(symbol, STRATEGY_MOCK);
 	const expiries = detail.data?.expiries ?? [];
 	const expiryParam = params.get("expiry");
 	const expiry = expiryParam && expiries.some((e) => e.expiryDate === expiryParam) ? expiryParam : expiries[0]?.expiryDate;
-	const chain = useChain(symbol, expiry);
+	const chain = useChain(symbol, expiry, STRATEGY_MOCK);
 
 	const [entries, setEntries] = useState<Entry[]>([]);
 	const [templateId, setTemplateId] = useState<string>("");
@@ -108,7 +111,7 @@ export default function StrategyPage() {
 		}
 		const row = strikes.find((s) => s.strikePrice === (add.strike ?? strikes[0]?.strikePrice));
 		const side = row?.[add.type];
-		if (!row || !side || side.contractId === undefined) return;
+		if (!row || !side) return;
 		setEntries((p) => [...p, {
 			key: nextKey++,
 			input: { contractId: side.contractId, side: add.side, quantity: 1 },

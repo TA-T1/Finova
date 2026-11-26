@@ -149,7 +149,7 @@ export function build(req: BuildRequest): BuildResponse {
 		}
 		const k = pickStrike(chain, leg.type, leg.strike!);
 		const side = k === null ? null : chain.strikes.find((s) => s.strikePrice === k)?.[leg.type];
-		if (!side?.contractId) throw new StrategyMockError("برای این الگو قیمت اعمال مناسبی در زنجیره نیست", 422);
+		if (!side) throw new StrategyMockError("برای این الگو قیمت اعمال مناسبی در زنجیره نیست", 422);
 		inputs.push({ contractId: side.contractId, side: leg.side, quantity: leg.ratio * qty });
 	}
 	return { templateId: tpl.id, name: tpl.name, ...analyze(inputs) };

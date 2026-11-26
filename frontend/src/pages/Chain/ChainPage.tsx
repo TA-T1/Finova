@@ -160,7 +160,7 @@ export default function ChainPage() {
 						{days !== null && (
 							<div className="rounded-md bg-neutral-100 px-3 py-1.5 text-sm text-neutral-700">
 								<span className="tabular-nums font-semibold">{formatInt(days)}</span> روز تا سررسید
-								{expiry && <span className="ms-2 text-xs text-neutral-400 tabular-nums">{ymd(expiry)}</span>}
+								{expiry && <span dir="ltr" className="ms-2 text-xs text-neutral-400 tabular-nums">{ymd(expiry)}</span>}
 							</div>
 						)}
 					</div>

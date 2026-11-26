@@ -6,7 +6,7 @@ import NumberCell from "@/components/Custom/NumberCell";
 import SearchableSelect from "@/components/Custom/SearchableSelect";
 import { useBacktest, useBacktests, useStrategyTemplates, useUnderlyings } from "@/hooks/useMarketQueries";
 import { cn } from "@/lib/utils";
-import { getErrorMessage } from "@/services/marketService";
+import { BACKTEST_MOCK, getErrorMessage } from "@/services/marketService";
 import type { BacktestDetail, BacktestTrade, ExitReason } from "@/types/backtestTypes";
 import { formatDecimal, formatFraction, formatInt, formatJalali } from "@/utils/format";
 
@@ -133,7 +133,7 @@ function Result({ run }: { run: BacktestDetail }) {
 
 export default function BacktestPage() {
 	const [params, setParams] = useSearchParams();
-	const underlyings = useUnderlyings();
+	const underlyings = useUnderlyings(BACKTEST_MOCK);
 	const templates = useStrategyTemplates();
 	const underlying = params.get("underlying") ?? undefined;
 	const template = params.get("template") ?? undefined;

@@ -9,9 +9,6 @@
 //   - volatilities and rates are decimal fractions (0.35 = 35%); names ending in
 //     `Percent` are percentages (2.5 = 2.5%)
 //   - dates are Gregorian YYYY-MM-DD (Tehran calendar day); timestamps are RFC 3339
-//
-// [requested] marks a field the pages use that the contract does NOT have yet. The
-// pages show "—" until the backend sends it (see docs/frontend-api-notes.md).
 
 export type OptionType = "call" | "put";
 export type UnderlyingKind = "stock" | "fund" | "index" | "other";
@@ -58,10 +55,10 @@ export interface QuoteFields {
 	volume: number | null;
 	openInterest: number | null;
 	quoteTs: string | null;
-	/** [requested] previous day's price: the "% change" of the last price needs it. */
-	prevClose?: number | null;
-	/** [requested] traded value today, rial (option_quotes.value is already stored). */
-	value?: number | null;
+	/** Previous day's price; `null` for quotes stored before the backend recorded it. */
+	prevClose: number | null;
+	/** Traded value today, rial. */
+	value: number | null;
 }
 
 /** One row of GET /market/options. */
@@ -105,7 +102,11 @@ export type MarketSortKey =
 	| "timeValue"
 	| "intrinsicValue"
 	| "priceGapPercent"
-	| "breakEvenPercent";
+	| "breakEvenPercent"
+	| "bestBid"
+	| "value"
+	| "breakEven"
+	| "moneyness";
 
 /** Query of GET /market/options. `limit` no longer exists: use pageSize. */
 export interface MarketWatchParams {
@@ -122,8 +123,8 @@ export interface MarketWatchParams {
 /** One side of a chain row (contract 1.6). The strike and expiry are on the row / the response. */
 export interface ChainSide extends QuoteFields, Omit<CalculatedFields, "underlyingPrice" | "daysToExpiry"> {
 	symbol: string;
-	/** [requested] needed to put the contract in a strategy. */
-	contractId?: number;
+	/** Needed to put the contract in a strategy. */
+	contractId: number;
 }
 
 export interface ChainStrike {

@@ -59,10 +59,18 @@ async function respond<T>(build: () => T | Promise<T>): Promise<T> {
 
 // ---- sorting ---------------------------------------------------------------
 
+const MONEYNESS_ORDER = { ITM: 1, ATM: 2, OTM: 3 } as const;
+
+/** Moneyness sorts ITM, ATM, OTM, like the server. */
+function sortValue(q: OptionQuote, key: MarketSortKey): string | number | null {
+	if (key === "moneyness") return q.moneyness ? MONEYNESS_ORDER[q.moneyness] : null;
+	return q[key];
+}
+
 /** Nulls always go last, in both directions, like SQL `NULLS LAST`. */
 function compare(a: OptionQuote, b: OptionQuote, key: MarketSortKey, dir: 1 | -1): number {
-	const x = a[key];
-	const y = b[key];
+	const x = sortValue(a, key);
+	const y = sortValue(b, key);
 	if (x === null && y === null) return a.contractId - b.contractId;
 	if (x === null) return 1;
 	if (y === null) return -1;
@@ -74,7 +82,7 @@ function compare(a: OptionQuote, b: OptionQuote, key: MarketSortKey, dir: 1 | -1
 const SORT_KEYS: MarketSortKey[] = [
 	"symbol", "underlyingSymbol", "optionType", "strikePrice", "expiryDate", "daysToExpiry", "lastPrice", "volume",
 	"openInterest", "impliedVolatility", "delta", "leverage", "effectiveLeverage", "timeValue", "intrinsicValue",
-	"priceGapPercent", "breakEvenPercent",
+	"priceGapPercent", "breakEvenPercent", "bestBid", "value", "breakEven", "moneyness",
 ];
 
 // ---- market ----------------------------------------------------------------
