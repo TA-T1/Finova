@@ -28,6 +28,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	m.POST("/collect/options", h.collectOptions)
 	m.POST("/collect/daily/:insCode", h.collectDaily)
 	m.GET("/options", h.listOptions)
+	m.GET("/expiries", h.listExpiries)
 	m.GET("/underlyings", h.listUnderlyings)
 	m.GET("/underlyings/:symbol", h.symbolPage)
 	m.GET("/chain", h.optionChain)
@@ -80,18 +81,40 @@ func (h *Handler) collectDaily(c *gin.Context) {
 
 // listOptions returns stored contracts joined with their latest quote.
 func (h *Handler) listOptions(c *gin.Context) {
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
-	rows, err := h.repo.ListOptionChain(c.Request.Context(), ChainFilter{
-		UnderlyingSymbol: c.Query("underlying"),
-		UnderlyingKind:   c.Query("underlyingKind"),
-		OptionType:       c.Query("type"),
-		Limit:            limit,
-	})
+	query, err := ParseOptionListQuery(c.Request.URL.Query())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	rows, err := h.repo.ListMarketOptions(c.Request.Context(), query)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"count": len(rows), "items": rows})
+	c.JSON(http.StatusOK, rows)
+}
+
+func (h *Handler) listExpiries(c *gin.Context) {
+	symbol := strings.TrimSpace(c.Query("underlying"))
+	var underlying *string
+	if symbol != "" {
+		exists, err := h.repo.UnderlyingExists(c.Request.Context(), symbol)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if !exists {
+			c.JSON(http.StatusNotFound, gin.H{"error": "underlying not found"})
+			return
+		}
+		underlying = &symbol
+	}
+	expiries, err := h.repo.ListExpiries(c.Request.Context(), underlying, time.Now())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, expiries)
 }
 
 // listUnderlyings returns known underlyings, optionally filtered by ?kind=.
@@ -113,7 +136,7 @@ func (h *Handler) optionChain(c *gin.Context) {
 	}
 	expiryText := c.Query("expiry")
 	expiry, err := time.Parse("2006-01-02", expiryText)
-	if err != nil {
+	if err != nil || expiry.Format("2006-01-02") != expiryText {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "expiry must use YYYY-MM-DD"})
 		return
 	}
@@ -126,9 +149,17 @@ func (h *Handler) optionChain(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no active option contracts for underlying and expiry"})
 		return
 	}
+	underlyingPrice, err := h.repo.LatestUnderlyingPrice(c.Request.Context(), symbol)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	daysToExpiry := dateDaysBetween(tehranDate(time.Now()), expiry)
 	c.JSON(http.StatusOK, OptionChain{
 		UnderlyingSymbol: symbol,
 		ExpiryDate:       expiryText,
+		DaysToExpiry:     &daysToExpiry,
+		UnderlyingPrice:  underlyingPrice,
 		Strikes:          strikes,
 	})
 }

@@ -55,7 +55,7 @@ Query: `kind` = `stock | fund | index | other` (optional).
 
 `name`, `isin` and `insCode` can be `null`.
 
-### 1.3 `GET /market/underlyings/:symbol` — changes (path only)
+### 1.3 `GET /market/underlyings/:symbol` — done
 
 This is the symbol page. The backend served it at `GET /market/symbol/:symbol`;
 the frontend expects `/underlyings/:symbol`. **Decision: `/market/underlyings/:symbol`**,
@@ -77,7 +77,7 @@ removed. The response is unchanged:
 `404` when the symbol has no active option contracts. `pcr` is `null` when call
 open interest is 0. `price`, `priceChange` and `priceChangePercent` can be `null`.
 
-### 1.4 `GET /market/expiries` — new
+### 1.4 `GET /market/expiries` — done
 
 Query: `underlying` = symbol (optional). Only expiries on or after today in Tehran,
 ascending.
@@ -92,7 +92,7 @@ ascending.
 Without `underlying`, `underlyingSymbol` is `null` and the items cover the whole
 market. `404` for an unknown `underlying`.
 
-### 1.5 `GET /market/options` — changes
+### 1.5 `GET /market/options` — done
 
 The watch-list table: every contract with its latest quote and calculated fields.
 
@@ -110,10 +110,12 @@ The watch-list table: every contract with its latest quote and calculated fields
 Sortable fields: `symbol`, `underlyingSymbol`, `optionType`, `strikePrice`,
 `expiryDate`, `daysToExpiry`, `lastPrice`, `volume`, `openInterest`,
 `impliedVolatility`, `delta`, `leverage`, `effectiveLeverage`, `timeValue`,
-`intrinsicValue`, `priceGapPercent`, `breakEvenPercent`. `null` values sort last
-in both directions. An unknown `sort` is `400`.
+`intrinsicValue`, `priceGapPercent`, `breakEvenPercent`, `bestBid`, `value`,
+`moneyness`, `breakEven`. `null` values sort last in both directions. An unknown
+`sort` is `400`.
 
-`limit` is removed. Use `pageSize`.
+`limit` is a deprecated alias for `pageSize`; when both are supplied,
+`pageSize` takes precedence.
 
 ```json
 {
@@ -133,7 +135,8 @@ Item:
   "underlyingId": 3, "underlyingSymbol": "خودرو", "underlyingKind": "stock",
   "optionType": "call", "strikePrice": 2000, "expiryDate": "2026-12-23", "contractSize": 1000,
   "lastPrice": 520, "closePrice": 510, "bestBid": 515, "bestAsk": 525,
-  "volume": 12000, "openInterest": 45000, "quoteTs": "2026-11-23T10:04:12+03:30",
+  "volume": 12000, "value": 6240000, "openInterest": 45000, "prevClose": 500,
+  "quoteTs": "2026-11-23T10:04:12+03:30",
 
   "underlyingPrice": 2450, "daysToExpiry": 30, "moneyness": "ITM",
   "marketPrice": 520, "priceSource": "last",
@@ -171,7 +174,7 @@ contract has no usable price.
 | `priceGap`, `priceGapPercent` | number | `marketPrice - theoreticalPrice`, and that in percent |
 | `metricsTs` | timestamp | when they were calculated |
 
-### 1.6 `GET /market/chain` — changes
+### 1.6 `GET /market/chain` — done
 
 One expiry's strikes, call and put side by side. Query: `underlying` (required),
 `expiry` (required, `YYYY-MM-DD`). `400` if either is missing or malformed, `404`
@@ -183,8 +186,9 @@ if there are no active contracts for them.
   "daysToExpiry": 30, "underlyingPrice": 2450,
   "strikes": [
     { "strikePrice": 2000,
-      "call": { "symbol": "ضخود1234", "lastPrice": 520, "closePrice": 510,
-                "bestBid": 515, "bestAsk": 525, "volume": 12000, "openInterest": 45000,
+      "call": { "contractId": 101, "symbol": "ضخود1234", "lastPrice": 520, "closePrice": 510,
+                "bestBid": 515, "bestAsk": 525, "volume": 12000, "value": 6240000,
+                "openInterest": 45000, "prevClose": 500,
                 "quoteTs": "2026-11-23T10:04:12+03:30",
                 "moneyness": "ITM", "marketPrice": 520, "priceSource": "last", "...": "..." },
       "put": null }
@@ -205,6 +209,19 @@ The response gains `metrics` (rows of calculated metrics stored):
 
 `POST /market/collect/daily/:insCode?adjusted=true`: backfills daily prices;
 `{ "insCode", "adjusted", "days" }`.
+
+### Market API additions implemented with this contract
+
+- Every chain side includes `contractId` for strategy-leg selection.
+- `/market/options` items and chain sides include `value` (Rials) and
+  `prevClose` (Rials). Historical quotes written before migration 000011 have
+  `prevClose: null`.
+- `/market/options` adds the `bestBid`, `value`, `moneyness`, and `breakEven`
+  sort keys.
+- `/market/options` accepts deprecated `limit` as an alias for `pageSize`;
+  `pageSize` wins if both are provided.
+- CORS origins are configured with `CORS_ALLOWED_ORIGINS`, a comma-separated
+  list. The default allows `http://localhost:3000` and `http://localhost:5173`.
 
 ---
 
@@ -421,17 +438,13 @@ sources.
 
 ## 5. Needs a decision
 
-1. **Symbol page path.** `/market/underlyings/:symbol` is proposed (1.3). The frontend
-   needs no change if it already uses it; the old path is removed afterwards.
-2. **`limit` becomes `page` and `pageSize`** on `/market/options` (1.5). Check that
-   nothing in the frontend still sends `limit`.
-3. **Strategy templates (2.3), data team.** Names, legs and strike rules above are a
+1. **Strategy templates (2.3), data team.** Names, legs and strike rules above are a
    draft, written without the data team. They need to confirm the list, the Persian
    names, and that "n strikes out of the money" is how strikes should be picked.
-4. **Backtests (3), data team.** Read-only; the `equity_curve` shape and the units of
+2. **Backtests (3), data team.** Read-only; the `equity_curve` shape and the units of
    `winRate`, `totalReturn` and `maxDrawdown` above must match what the pipeline writes.
-5. **Auth.** Strategy endpoints need a token (Conventions). The frontend currently
+3. **Auth.** Strategy endpoints need a token (Conventions). The frontend currently
    calls `http://1.2.3.4:8000` with `/v1/auth/login`; the backend serves
    `/api/v1` on port 8080 (`APP_PORT`). The base URL and path need to be aligned.
-6. **Calculation defaults** (see calculation-layer.md): risk-free rate 0.30, and the
+4. **Calculation defaults** (see calculation-layer.md): risk-free rate 0.30, and the
    option price priority last, then mid, then close.

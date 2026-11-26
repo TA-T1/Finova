@@ -8,16 +8,7 @@ import (
 )
 
 // ChainOption is one listed side at a strike and expiry.
-type ChainOption struct {
-	Symbol       string     `json:"symbol"`
-	LastPrice    *int64     `json:"lastPrice"`
-	ClosePrice   *int64     `json:"closePrice"`
-	BestBid      *int64     `json:"bestBid"`
-	BestAsk      *int64     `json:"bestAsk"`
-	Volume       *int64     `json:"volume"`
-	OpenInterest *int64     `json:"openInterest"`
-	QuoteTS      *time.Time `json:"quoteTs"`
-}
+type ChainOption = MarketChainOption
 
 // StrikePair groups the call and put contracts listed at one strike.
 type StrikePair struct {
@@ -30,6 +21,8 @@ type StrikePair struct {
 type OptionChain struct {
 	UnderlyingSymbol string       `json:"underlyingSymbol"`
 	ExpiryDate       string       `json:"expiryDate"`
+	DaysToExpiry     *int         `json:"daysToExpiry"`
+	UnderlyingPrice  *int64       `json:"underlyingPrice"`
 	Strikes          []StrikePair `json:"strikes"`
 }
 
@@ -78,51 +71,36 @@ type SymbolPage struct {
 
 // ListOptionChainForExpiry returns call/put pairs for one underlying and expiry.
 func (r *Repository) ListOptionChainForExpiry(ctx context.Context, symbol string, expiry time.Time) ([]StrikePair, error) {
-	const q = `
-		SELECT c.strike_price, c.option_type::text, c.symbol,
-		       q.last_price, q.close_price, q.best_bid, q.best_ask,
-		       q.volume, q.open_interest, q.ts
-		FROM option_contracts c
-		JOIN underlyings u ON u.id = c.underlying_id
-		LEFT JOIN option_quotes_latest q ON q.contract_id = c.id
-		WHERE u.symbol = $1
-		  AND c.expiry_date = $2
-		  AND c.expiry_date >= (now() AT TIME ZONE 'Asia/Tehran')::date
-		ORDER BY c.strike_price, c.option_type`
-	rows, err := r.db.Query(ctx, q, symbol, expiry)
+	options, err := r.ListMarketOptions(ctx, OptionListQuery{
+		UnderlyingSymbol: symbol,
+		Expiry:           &expiry,
+		ActiveOnly:       true,
+		Today:            tehranDate(time.Now()),
+		Sort:             "strikePrice",
+		Order:            "asc",
+		Page:             1,
+		PageSize:         5000,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
 	var out []StrikePair
-	for rows.Next() {
-		var strike int64
-		var optionType, symbol string
-		var option ChainOption
-		if err := rows.Scan(
-			&strike, &optionType, &symbol,
-			&option.LastPrice, &option.ClosePrice, &option.BestBid, &option.BestAsk,
-			&option.Volume, &option.OpenInterest, &option.QuoteTS,
-		); err != nil {
-			return nil, err
-		}
-		option.Symbol = symbol
-
-		if len(out) == 0 || out[len(out)-1].StrikePrice != strike {
-			out = append(out, StrikePair{StrikePrice: strike})
+	for _, item := range options.Items {
+		if len(out) == 0 || out[len(out)-1].StrikePrice != item.StrikePrice {
+			out = append(out, StrikePair{StrikePrice: item.StrikePrice})
 		}
 		pair := &out[len(out)-1]
-		switch optionType {
+		option := chainOption(item)
+		switch item.OptionType {
 		case "call":
-			pair.Call = &option
+			pair.Call = option
 		case "put":
-			pair.Put = &option
+			pair.Put = option
 		default:
-			return nil, fmt.Errorf("unknown option type %q for %s", optionType, symbol)
+			return nil, fmt.Errorf("unknown option type %q for %s", item.OptionType, item.Symbol)
 		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 type symbolContractRow struct {
