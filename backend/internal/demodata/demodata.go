@@ -11,7 +11,10 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -29,6 +32,9 @@ type Table struct {
 	Export string
 	// HasSerialID marks tables whose id sequence must be moved past the loaded ids.
 	HasSerialID bool
+	// Optional marks a file that older datasets do not have: Import skips the
+	// table when the file is missing.
+	Optional bool
 }
 
 // Tables lists the dataset in load order (parents before children).
@@ -37,6 +43,8 @@ var Tables = []Table{
 	{Name: "underlying_daily_prices", Export: "SELECT * FROM underlying_daily_prices ORDER BY underlying_id, trade_date"},
 	{Name: "option_contracts", Export: "SELECT * FROM option_contracts ORDER BY id", HasSerialID: true},
 	{Name: "option_quotes", Export: "SELECT * FROM option_quotes_latest ORDER BY id", HasSerialID: true},
+	// After the contracts it references. Without these rows every calculated field of the API is null.
+	{Name: "option_metrics", Export: "SELECT * FROM option_metrics_latest ORDER BY contract_id", Optional: true},
 	{Name: "underlying_quotes", Export: "SELECT DISTINCT ON (underlying_id) * FROM underlying_quotes ORDER BY underlying_id, ts DESC", HasSerialID: true},
 	{Name: "quote_snapshots", Export: "SELECT * FROM quote_snapshots ORDER BY trade_date, contract_symbol"},
 }
@@ -77,12 +85,20 @@ func Export(ctx context.Context, db *pgxpool.Pool, dir string) (map[string]int64
 	return counts, nil
 }
 
-// Import loads the dataset in dir. The target tables must be empty, unless
+// Import loads the dataset in dir. A missing file of an Optional table is
+// skipped with a log line. The target tables must be empty, unless
 // replace is true, which first empties all of them (TRUNCATE ... CASCADE).
 // Everything happens in one transaction.
 func Import(ctx context.Context, db *pgxpool.Pool, dir string, replace bool) (map[string]int64, error) {
+	var load []Table // the tables that have a file
 	for _, t := range Tables {
-		if _, err := os.Stat(path(dir, t)); err != nil {
+		_, err := os.Stat(path(dir, t))
+		switch {
+		case err == nil:
+			load = append(load, t)
+		case t.Optional && errors.Is(err, fs.ErrNotExist):
+			slog.Info("demodata: no file for an optional table, skipping", "table", t.Name, "file", path(dir, t))
+		default:
 			return nil, fmt.Errorf("demodata: %w", err)
 		}
 	}
@@ -113,7 +129,7 @@ func Import(ctx context.Context, db *pgxpool.Pool, dir string, replace bool) (ma
 	}
 
 	counts := map[string]int64{}
-	for _, t := range Tables {
+	for _, t := range load {
 		n, err := importTable(ctx, tx.Conn().PgConn(), dir, t)
 		if err != nil {
 			return counts, fmt.Errorf("demodata: import %s: %w", t.Name, err)

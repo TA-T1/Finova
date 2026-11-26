@@ -325,8 +325,9 @@ go run ./cmd/backfill import [-replace] <dir> # load them (migrations applied fi
 go run ./cmd/backfill save-market file.json   # one live MarketSnapshot, loadable with source.NewFake
 ```
 
-The dataset has `underlyings`, `underlying_daily_prices`, `option_contracts`, the newest `option_quotes` row per contract, the newest
-`underlying_quotes` row per underlying, and `quote_snapshots`. `import` refuses a database whose market tables are not empty, unless
+The dataset has `underlyings`, `underlying_daily_prices`, `option_contracts`, the newest `option_quotes` and `option_metrics` rows per contract, the newest
+`underlying_quotes` row per underlying, and `quote_snapshots`. `option_metrics.csv.gz` is optional on import (the committed copy does not have it yet, see
+`docs/tasks/task-07-history-backfill-and-demo-dataset.md`). `import` refuses a database whose market tables are not empty, unless
 `-replace` is given (it then runs `TRUNCATE ... RESTART IDENTITY CASCADE` on these tables, which also empties tables that reference them).
 It is one transaction, and the id sequences are moved past the loaded ids.
 

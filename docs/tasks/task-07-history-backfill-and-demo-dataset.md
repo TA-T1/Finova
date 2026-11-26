@@ -23,9 +23,9 @@ Bid, ask and open interest are not in history, so they stay `0`, which in this t
 `snapshot.InsertMissing` (new, in `internal/snapshot/store.go`) uses `ON CONFLICT (trade_date, contract_symbol) DO NOTHING`. The existing upsert was refactored (`mergeHead` + `mergeUpdate`/`mergeSkip`, shared `write`) so the live path behaves exactly as before. A live snapshot with bid/ask/open interest always wins, and the backfill can be rerun safely.
 
 ### `backend/internal/demodata/` (export / import)
-Tables, in load order: `underlyings`, `underlying_daily_prices`, `option_contracts`, `option_quotes` (newest row per contract only), `underlying_quotes` (newest per underlying), `quote_snapshots`. Each becomes `<table>.csv.gz` with a header row.
+Tables, in load order: `underlyings`, `underlying_daily_prices`, `option_contracts`, `option_quotes` (newest row per contract only), `option_metrics` (newest per contract, from `option_metrics_latest`; **optional**), `underlying_quotes` (newest per underlying), `quote_snapshots`. Each becomes `<table>.csv.gz` with a header row.
 - `Export` uses `COPY (query) TO STDOUT` per table.
-- `Import` loads all tables in one transaction, takes the column list from each file's header, resets the id sequences past the loaded ids, and refuses a database whose market tables are not empty unless `replace` is set (`TRUNCATE ... RESTART IDENTITY CASCADE`). It checks all files exist before touching the database.
+- `Import` loads all tables in one transaction, takes the column list from each file's header, resets the id sequences past the loaded ids, and refuses a database whose market tables are not empty unless `replace` is set (`TRUNCATE ... RESTART IDENTITY CASCADE`). It checks the files exist before touching the database. `option_metrics.csv.gz` is optional: a dataset without it (made before it was added) imports, with a log line, and leaves the table empty.
 
 ### `backend/cmd/backfill`
 ```
@@ -53,10 +53,34 @@ for f in backend/migrations/*.up.sql; do psql "$DATABASE_URL" -f "$f"; done
 cd backend && go run ./cmd/backfill import testdata/demo
 ```
 
+## Still to do: regenerate the dataset with metrics
+
+**The committed dataset has no `option_metrics.csv.gz`** (checked 2026-11-26). The code exports and imports it, but the data was not regenerated:
+there is no command that recalculates metrics from stored quotes (`cmd/metrics` does not exist), and the market was closed (a Thursday), so a
+live collection was refused. Until it is regenerated, a database loaded from the dataset returns `null` for `impliedVolatility`, `delta`,
+`marketPrice` and every other calculated field.
+
+Option A, once a recompute command exists (preferred; it keeps the quotes of the committed dataset):
+
+1. Apply the migrations to an empty database, then `cd backend && go run ./cmd/backfill import testdata/demo`.
+2. Run the recompute command.
+3. `rm -rf testdata/demo && go run ./cmd/backfill export testdata/demo`.
+
+Option B, during market hours (Saturday to Wednesday, 09:00 to 12:30 Tehran):
+
+1. Apply the migrations to an empty database and import the dataset as above.
+2. Start the API (`go run ./cmd/api`) and run one collection: `curl -XPOST localhost:8080/api/v1/market/collect/options`. The reply's `metrics` count must be above 0.
+3. `go run ./cmd/snapshot run`, so today's snapshot has bid, ask and open interest. (Run it close to the end of the session; the 13:00 run is the final one.)
+4. `rm -rf testdata/demo && go run ./cmd/backfill export testdata/demo`.
+
+Then check that `ls testdata/demo/option_metrics.csv.gz` exists, that `go test ./internal/demodata` passes with `TEST_DATABASE_URL` set, that
+`GET /api/v1/market/options?sort=value&order=desc` shows non-null `impliedVolatility`, `delta` and `marketPrice` for liquid contracts, and update
+the dataset description above (date, row counts, that it includes metrics).
+
 ## Tests
 - `internal/backfill`: rows from history by hand (prices, identity, bid/ask/OI zero, underlying price), today and after-expiry rows dropped, underlying falls back to settlement price, missing underlying history gives NULL price, a failed contract is counted and skipped, `WithLimit`, underlying history fetched once, empty chain is an error.
 - `internal/snapshot` (DB): `InsertMissing` leaves existing rows untouched.
-- `internal/demodata` (DB): export then import round trip (row counts, newest quote only, sequences usable after import, non-empty database refused, `replace` works), and import with missing files fails before touching the database.
+- `internal/demodata` (DB): export then import round trip (row counts, newest quote only, sequences usable after import, non-empty database refused, `replace` works), import with missing files fails before touching the database, metrics round-trip (newest per contract only, NULLs kept), a dataset without the metrics file imports, and the committed dataset imports.
 - DB tests need `TEST_DATABASE_URL`; they run against a throw-away schema and skip otherwise.
 
 ## Findings other people need
