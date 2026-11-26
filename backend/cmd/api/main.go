@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"Finova/internal/backtest"
 	"Finova/internal/config"
 	"Finova/internal/database"
 	"Finova/internal/datasource/tsetmc"
@@ -40,13 +41,14 @@ func main() {
 	collector := market.NewCollector(src, repo, slog.Default(),
 		market.WithRiskFreeRate(cfg.RiskFreeRate))
 	marketH := market.NewHandler(collector, repo)
+	backtestH := backtest.NewHandler(backtest.NewRepository(db))
 
 	// Optional background scheduler, enabled by COLLECT_INTERVAL.
 	if cfg.CollectInterval > 0 {
 		go collector.Run(ctx, cfg.CollectInterval)
 	}
 
-	r := httpapi.NewRouter(db, marketH, cfg.CORSAllowedOrigins)
+	r := httpapi.NewRouter(db, marketH, cfg.CORSAllowedOrigins, backtestH)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		slog.Error("server", "err", err)
 	}
