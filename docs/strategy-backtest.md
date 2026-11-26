@@ -18,16 +18,21 @@ this adds strategy backtests next to them. It changes nothing for signal backtes
 | `max_drawdown` | positive fraction |
 | `equity_curve` | `[{ "date": "2026-11-23", "equity": 1.0 }, ...]`, starts at 1.0 |
 
-Two things do not fit and need **one new migration** (suggested `000010_backtest_run_details`):
+Three result fields did not fit the existing table. Migration
+`000012_backtest_run_details` adds `metrics`, `trades` and `skipped` as JSONB
+columns. Migration 000010 remains unused.
 
 ```sql
 ALTER TABLE backtest_runs
-    ADD COLUMN metrics JSONB,   -- trades, skipped, avg_pnl, profit_factor, total_fees, model_priced_share, ...
-    ADD COLUMN trades  JSONB;   -- one object per expiry, see below
+    ADD COLUMN IF NOT EXISTS metrics JSONB,
+    ADD COLUMN IF NOT EXISTS trades  JSONB,
+    ADD COLUMN IF NOT EXISTS skipped JSONB;
+CREATE INDEX IF NOT EXISTS idx_backtest_runs_model_underlying
+    ON backtest_runs (model_name, (params->>'underlying'));
 ```
 
-(or a `backtest_trades` table keyed by `run_id`; the JSON shape below is the same either way). The engine's
-`to_backtest_run()` output already has the keys `metrics`, `trades` and `skipped`.
+The engine's `to_backtest_run()` output already has the keys `metrics`, `trades`
+and `skipped`; the Python writer depends on this migration being applied first.
 
 ## Trade (one per expiry)
 
