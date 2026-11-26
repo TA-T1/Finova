@@ -110,8 +110,8 @@ func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts t
 	const q = `
 		INSERT INTO option_quotes
 			(contract_id, ts, last_price, close_price, best_bid, best_ask,
-			 bid_volume, ask_volume, volume, value, open_interest)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			 bid_volume, ask_volume, volume, value, open_interest, prev_close)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (contract_id, ts) DO UPDATE SET
 			last_price    = EXCLUDED.last_price,
 			close_price   = EXCLUDED.close_price,
@@ -121,10 +121,11 @@ func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts t
 			ask_volume    = EXCLUDED.ask_volume,
 			volume        = EXCLUDED.volume,
 			value         = EXCLUDED.value,
-			open_interest = EXCLUDED.open_interest`
+			open_interest = EXCLUDED.open_interest,
+			prev_close    = EXCLUDED.prev_close`
 	_, err := r.db.Exec(ctx, q,
 		contractID, ts, leg.Last, leg.Close, leg.BestBid, leg.BestAsk,
-		leg.BidVolume, leg.AskVolume, leg.Volume, leg.Value, leg.OpenInterest)
+		leg.BidVolume, leg.AskVolume, leg.Volume, leg.Value, leg.OpenInterest, leg.Yesterday)
 	return err
 }
 
