@@ -11,7 +11,7 @@ import { formatInt, formatJalaliLong, formatTime } from "@/utils/format";
 import MarketWatchTable from "./MarketWatchTable";
 
 /** Numbers are most useful biggest-first, so their first click sorts descending. */
-const TEXT_KEYS: MarketSortKey[] = ["symbol", "underlyingSymbol", "optionType", "expiryDate"];
+const TEXT_KEYS: MarketSortKey[] = ["symbol", "underlyingSymbol", "optionType", "expiryDate", "moneyness"];
 
 interface State {
 	underlying?: string;

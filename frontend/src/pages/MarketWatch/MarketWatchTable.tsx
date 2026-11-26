@@ -14,8 +14,8 @@ interface Column {
 	label: string;
 	/** Header text under the label, e.g. the second value of a combined column. */
 	sub?: string;
-	/** The field sent as `sort`; missing when the API cannot sort by this column. */
-	sortKey?: MarketSortKey;
+	/** The field sent as `sort`. */
+	sortKey: MarketSortKey;
 	/** The first column stays in view while the table scrolls sideways. */
 	sticky?: boolean;
 	cell: (q: OptionQuote) => ReactNode;
@@ -66,7 +66,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{
-		id: "bidask", label: "بهترین خرید", sub: "بهترین فروش",
+		id: "bidask", label: "بهترین خرید", sub: "بهترین فروش", sortKey: "bestBid",
 		cell: (q) => (
 			<div className="leading-tight">
 				<NumberCell value={q.bestBid} className="text-emerald-700" />
@@ -75,7 +75,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{ id: "volume", label: "حجم", sortKey: "volume", cell: (q) => <NumberCell value={q.volume} /> },
-	{ id: "value", label: "ارزش معاملات", cell: (q) => <NumberCell value={q.value} kind="compact" /> },
+	{ id: "value", label: "ارزش معاملات", sortKey: "value", cell: (q) => <NumberCell value={q.value} kind="compact" /> },
 	{ id: "oi", label: "موقعیت‌های باز", sortKey: "openInterest", cell: (q) => <NumberCell value={q.openInterest} /> },
 	{ id: "iv", label: "نوسان ضمنی", sub: "IV", sortKey: "impliedVolatility", cell: (q) => <NumberCell value={q.impliedVolatility} kind="fraction" /> },
 	{ id: "delta", label: "دلتا", sortKey: "delta", cell: (q) => <NumberCell value={q.delta} kind="decimal" digits={2} /> },
@@ -91,7 +91,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{
-		id: "be", label: "نقطه سر‌به‌سر", sub: "فاصله از قیمت پایه٪", sortKey: "breakEvenPercent",
+		id: "be", label: "نقطه سر‌به‌سر", sub: "فاصله از قیمت پایه٪", sortKey: "breakEven",
 		cell: (q) => (
 			<div className="leading-tight">
 				<NumberCell value={q.breakEven} />
@@ -100,7 +100,7 @@ const COLUMNS: Column[] = [
 		),
 	},
 	{ id: "lev", label: "اهرم", sortKey: "leverage", cell: (q) => <NumberCell value={q.leverage} kind="decimal" digits={1} /> },
-	{ id: "status", label: "وضعیت", sub: "ITM / OTM", cell: (q) => <MoneynessBadge value={q.moneyness} /> },
+	{ id: "status", label: "وضعیت", sub: "ITM / OTM", sortKey: "moneyness", cell: (q) => <MoneynessBadge value={q.moneyness} /> },
 ];
 
 interface Props {
@@ -119,7 +119,7 @@ export default function MarketWatchTable({ rows, sort, order, onSort, loading }:
 				<thead>
 					<tr>
 						{COLUMNS.map((c) => {
-							const active = !!c.sortKey && c.sortKey === sort;
+							const active = c.sortKey === sort;
 							return (
 								<th
 									key={c.id}
@@ -130,31 +130,24 @@ export default function MarketWatchTable({ rows, sort, order, onSort, loading }:
 										c.sticky ? "start-0 z-30 border-e" : "z-20",
 									)}
 								>
-									{c.sortKey ? (
-										<button
-											type="button"
-											onClick={() => onSort(c.sortKey!)}
-											className={cn(
-												"inline-flex cursor-pointer items-center gap-1 text-start hover:text-sky-700",
-												active && "text-sky-700",
-											)}
-										>
-											<span className="leading-tight">
-												{c.label}
-												{c.sub && <span className="block font-normal text-neutral-400">{c.sub}</span>}
-											</span>
-											{active ? (
-												order === "asc" ? <ChevronUp className="size-3.5" aria-hidden /> : <ChevronDown className="size-3.5" aria-hidden />
-											) : (
-												<ChevronsUpDown className="size-3.5 text-neutral-300" aria-hidden />
-											)}
-										</button>
-									) : (
+									<button
+										type="button"
+										onClick={() => onSort(c.sortKey)}
+										className={cn(
+											"inline-flex cursor-pointer items-center gap-1 text-start hover:text-sky-700",
+											active && "text-sky-700",
+										)}
+									>
 										<span className="leading-tight">
 											{c.label}
 											{c.sub && <span className="block font-normal text-neutral-400">{c.sub}</span>}
 										</span>
-									)}
+										{active ? (
+											order === "asc" ? <ChevronUp className="size-3.5" aria-hidden /> : <ChevronDown className="size-3.5" aria-hidden />
+										) : (
+											<ChevronsUpDown className="size-3.5 text-neutral-300" aria-hidden />
+										)}
+									</button>
 								</th>
 							);
 						})}

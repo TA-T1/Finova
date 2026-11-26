@@ -7,8 +7,10 @@ The contract used is `docs/api-contract.md` (v1 draft, on branch `feat/cal_layer
 ## What the task was
 Switch the market watch and chain pages from mock data to the real API, following the agreed contract.
 
-## Important status
-**The real-API branch of the code has never been run against a server.** The calculation layer and the endpoints are not merged. The mock layer was rebuilt to return exactly the contract's shapes (with sorting, paging, 404s), so switching should be a config change (`VITE_USE_MOCK=false`, `VITE_API_BASE_URL`), but the first real test may show differences.
+## Status
+**Checked against the real server on 2026-11-26** (`main` plus the demo dataset, `VITE_USE_MOCK=false`): market watch, chain and symbol page work.
+The `[requested]` fields (`prevClose`, `value`, `contractId`) and sort keys now exist and are used. Strategy and backtest pages stay on mock data.
+Current gaps and backend issues are in `docs/frontend-api-notes.md`; the "Gaps in the contract" section below is historical.
 
 ## Changes (all under `frontend/`)
 | File | Change |

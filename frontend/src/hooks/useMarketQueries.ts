@@ -15,6 +15,7 @@ import {
 	getStrategyTemplates,
 	getSymbol,
 	getUnderlyings,
+	USE_MOCK,
 } from "@/services/marketService";
 import type { BacktestParams } from "@/types/backtestTypes";
 import type { MarketWatchParams } from "@/types/marketTypes";
@@ -42,10 +43,10 @@ export function useMarketWatch(params: MarketWatchParams) {
 }
 
 /** The list for the underlying filter. Changes rarely: no auto-refresh. */
-export function useUnderlyings() {
+export function useUnderlyings(mock = USE_MOCK) {
 	return useQuery({
-		queryKey: ["underlyings"],
-		queryFn: () => getUnderlyings(),
+		queryKey: ["underlyings", mock],
+		queryFn: () => getUnderlyings(undefined, mock),
 		staleTime: 5 * 60_000,
 	});
 }
@@ -60,19 +61,19 @@ export function useExpiries(underlying?: string) {
 }
 
 /** The symbol page data: price, expiries, open interest, max pain. */
-export function useSymbol(symbol: string | undefined) {
+export function useSymbol(symbol: string | undefined, mock = USE_MOCK) {
 	return useQuery({
-		queryKey: ["symbol", symbol],
-		queryFn: () => getSymbol(symbol!),
+		queryKey: ["symbol", symbol, mock],
+		queryFn: () => getSymbol(symbol!, mock),
 		enabled: !!symbol,
 		...live,
 	});
 }
 
-export function useChain(symbol: string | undefined, expiry: string | undefined) {
+export function useChain(symbol: string | undefined, expiry: string | undefined, mock = USE_MOCK) {
 	return useQuery({
-		queryKey: ["chain", symbol, expiry],
-		queryFn: () => getChain(symbol!, expiry!),
+		queryKey: ["chain", symbol, expiry, mock],
+		queryFn: () => getChain(symbol!, expiry!, mock),
 		enabled: !!symbol && !!expiry,
 		placeholderData: keepPreviousData,
 		...live,

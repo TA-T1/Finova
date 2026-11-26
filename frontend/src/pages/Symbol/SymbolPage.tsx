@@ -99,7 +99,7 @@ export default function SymbolPage() {
 					{nearest ? (
 						<div className="text-lg font-semibold">
 							{formatJalaliLong(nearest.expiryDate)}
-							<span className="ms-2 text-sm font-normal text-neutral-500">{formatInt(daysLeft(nearest.expiryDate))} روز</span>
+							<div className="text-sm font-normal text-neutral-500">{formatInt(daysLeft(nearest.expiryDate))} روز مانده</div>
 						</div>
 					) : (
 						<span className="text-neutral-300">—</span>

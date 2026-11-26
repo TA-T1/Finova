@@ -1,6 +1,6 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { USE_MOCK } from "@/services/marketService";
+import { BACKTEST_MOCK, STRATEGY_MOCK, USE_MOCK } from "@/services/marketService";
 
 const NAV = [
 	{ to: "/market-watch", label: "دیده‌بان بازار" },
@@ -11,6 +11,11 @@ const NAV = [
 
 /** Shell for the market pages: a top bar with the menu, then the page. */
 export default function AppLayout() {
+	const { pathname } = useLocation();
+	const mockPage =
+		USE_MOCK ||
+		(STRATEGY_MOCK && pathname.startsWith("/strategy")) ||
+		(BACKTEST_MOCK && pathname.startsWith("/backtests"));
 	return (
 		<div className="min-h-screen bg-neutral-50 text-neutral-900 [color-scheme:light]">
 			<header className="sticky top-0 z-50 border-b border-neutral-200 bg-white">
@@ -34,9 +39,9 @@ export default function AppLayout() {
 							</NavLink>
 						))}
 					</nav>
-					{USE_MOCK && (
+					{mockPage && (
 						<span
-							title="داده‌ها نمونه هستند و از سرور نمی‌آیند (VITE_USE_MOCK)"
+							title="داده‌ها نمونه هستند و از سرور نمی‌آیند (mock data)"
 							className="ms-auto rounded-full bg-violet-50 px-2.5 py-0.5 text-xs font-medium text-violet-700 ring-1 ring-violet-200 ring-inset"
 						>
 							داده نمونه
