@@ -281,3 +281,52 @@ Caveats:
   Take manual snapshots after the close.
 - **Missed days:** the daemon only schedules the next 13:00. If it is down at 13:00, that day is missed, and backfilling is out of scope (Sprint 3).
   After a restart, run `snapshot run` by hand.
+
+## History backfill and demo dataset (`cmd/backfill`)
+
+`quote_snapshots` only gets a row per day from the day the daily snapshot starts running.
+`backfill history` fills the past from TSETMC's per-instrument history
+(`GetClosingPriceDailyList/{insCode}/0`, see "Historical option prices").
+
+```bash
+go run ./cmd/backfill history            # every contract in today's chain, about 15 min at 2 requests/s
+go run ./cmd/backfill history -limit 20  # quick trial
+```
+
+- **What is filled:** `close_price` (settlement price), `last_price`, `volume`, `value`, `trade_count`, and `underlying_price`
+  (the underlying's own history, same date, last price, else settlement price; `NULL` if that day is missing).
+- **What is not:** `bid_price`, `ask_price` and `open_interest` stay `0`, which means *unknown* in this table. A backtest must not use a
+  backfilled row for bid/ask pricing.
+- **Which days:** only days before today in Tehran, never after the contract's expiry, and not days on which the contract did not trade
+  (no volume and no price). Today belongs to the live snapshot.
+- **Never overwrites:** rows are inserted with `ON CONFLICT DO NOTHING` (`snapshot.InsertMissing`), so a live snapshot with bid/ask/open interest
+  always wins, and the command can be run again safely. It writes in batches of 20,000 rows, so an interrupted run keeps its progress.
+- **Reach:** only contracts in the current chain (about 60 trading days each). Expired contracts are not listed, so they are not backfilled.
+- A failed contract is logged and counted (`failed=`), and the run goes on. The summary line prints the counts and the date range.
+
+### Demo dataset (offline)
+
+```bash
+go run ./cmd/backfill export <dir>            # save the market tables to <dir>/*.csv.gz
+go run ./cmd/backfill import [-replace] <dir> # load them (migrations applied first)
+go run ./cmd/backfill save-market file.json   # one live MarketSnapshot, loadable with source.NewFake
+```
+
+The dataset has `underlyings`, `underlying_daily_prices`, `option_contracts`, the newest `option_quotes` row per contract, the newest
+`underlying_quotes` row per underlying, and `quote_snapshots`. `import` refuses a database whose market tables are not empty, unless
+`-replace` is given (it then runs `TRUNCATE ... RESTART IDENTITY CASCADE` on these tables, which also empties tables that reference them).
+It is one transaction, and the id sequences are moved past the loaded ids.
+
+The committed copy is in `backend/testdata/demo/`, taken on 2026-11-24 after the market closed (1,818 contracts, 30 underlyings):
+`quote_snapshots` has 59,642 rows from 2026-07-29 to 2026-11-24 (history for all current contracts, plus a live snapshot of 2026-11-24 with bid/ask/open interest);
+`underlying_daily_prices` holds the **back-adjusted** three-year series of `data-pipeline/output/underlyings_daily.csv` (rounded to whole rials),
+not the raw series, because raw prices have jumps at capital increases that would show up as volatility in HV20. Load it with:
+
+```bash
+for f in backend/migrations/*.up.sql; do psql "$DATABASE_URL" -f "$f"; done   # or your migration tool
+cd backend && go run ./cmd/backfill import testdata/demo
+```
+
+Note on `adjusted=1`: for these instruments the endpoint returned a single row (one day), so a series backfilled with
+`POST /market/collect/daily/:insCode?adjusted=true` holds one row per underlying. Use `adjusted=false` (raw) to get the full history.
+Raw prices have one-day jumps at capital increases and dividends.

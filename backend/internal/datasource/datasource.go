@@ -52,6 +52,8 @@ type DailyPrice struct {
 	Final  int64 // weighted settlement price ("قیمت پایانی")
 	Volume int64 // traded quantity
 	Value  int64 // traded value (Rial)
+	// TradeCount is the number of trades (TSETMC zTotTran); 0 when unknown.
+	TradeCount int64
 }
 
 // OptionLeg is one side (call or put) of an option row: its identity plus its
