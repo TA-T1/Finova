@@ -97,6 +97,18 @@ need both it and a market price.
   and falls back to the book. This has not been checked against live data on a
   day with an untraded contract.
 
+## Offline recompute
+
+`go run ./cmd/metrics recompute` recalculates metrics for active contracts from
+the latest option and underlying quotes already in Postgres. It does not call
+TSETMC and can run outside market hours. Each row uses its option quote's
+timestamp, so a repeat run upserts the same `(contract_id, ts)` row. Use
+`-at <RFC3339>` to override the timestamp for every row, or `-dry-run` to
+calculate and log the results without writing. The command shares HV20
+calculation and metric storage with the live collector. Contracts without a
+quote, a usable underlying spot, or a positive strike are skipped with a
+reason in the summary.
+
 ## Checking it
 
 ```sql
