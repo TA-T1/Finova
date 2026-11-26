@@ -50,10 +50,14 @@ behind the same interface so they can be fleshed out later without wider changes
 
 ## HTTP endpoints (`/api/v1`)
 
+> The agreed final request/response shapes, including the strategy and backtest
+> endpoints, are in [api-contract.md](api-contract.md). Where it differs from the
+> table below, it wins.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET`  | `/health` | Liveness + DB ping |
-| `POST` | `/market/collect/options` | Run one option-chain collection pass; returns counts (`rows`, `underlyings`, `contracts`, `quotes`, `errors`) |
+| `POST` | `/market/collect/options` | Run one option-chain collection pass; returns counts (`rows`, `underlyings`, `contracts`, `quotes`, `metrics`, `errors`; `metrics` is the number of calculated rows stored, see [calculation-layer.md](calculation-layer.md)) |
 | `POST` | `/market/collect/daily/:insCode?adjusted=true` | Backfill an underlying's daily history |
 | `GET`  | `/market/options?underlying=<sym>&type=call\|put&underlyingKind=stock\|fund\|index\|other&limit=<n>` | Stored contracts joined with their latest quote |
 | `GET`  | `/market/underlyings?kind=stock\|fund\|index\|other` | Known underlyings (optionally filtered by kind) |

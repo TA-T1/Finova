@@ -29,7 +29,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	m.POST("/collect/daily/:insCode", h.collectDaily)
 	m.GET("/options", h.listOptions)
 	m.GET("/underlyings", h.listUnderlyings)
+	m.GET("/underlyings/:symbol", h.symbolPage)
 	m.GET("/chain", h.optionChain)
+	// Deprecated alias of /underlyings/:symbol, kept until the frontend has
+	// switched (see docs/api-contract.md, section 1.3).
 	m.GET("/symbol/:symbol", h.symbolPage)
 }
 
