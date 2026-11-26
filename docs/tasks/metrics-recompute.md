@@ -53,9 +53,11 @@ timestamp to its quote timestamp, and support dry runs and a timestamp override.
   `read=1694 calculated=1694 skipped=0 stored=0`; the table still had 1,694
   rows.
 - A query of active contracts with quote volume above zero found 559 liquid
-  contracts, of which 528 had non-null implied volatility, delta, and market
-  price. The remaining quotes did not produce all three values from the stored
-  data.
+  contracts. All 559 had non-null delta and market price; 528 also had
+  non-null implied volatility. Of the 31 null-IV cases, 21 option prices were
+  at or below intrinsic value and 10 were below the discounted call lower
+  bound. The calculation layer correctly leaves IV null for these prices
+  instead of fabricating a volatility.
 - Started `cmd/api` on port 18080 and requested
   `GET /api/v1/market/options?sort=value&order=desc`: HTTP 200, 50 items, and
   `total=1818`. The first item included value, market price, and delta; its IV
@@ -82,6 +84,9 @@ and skips when the variable is not set.
 
 - The command recalculates only the latest option quote for each active
   contract, not historical quote snapshots.
+- Some volume-positive contracts still have null IV when their observed price
+  violates the model's no-arbitrage bounds. Producing IV for those would
+  require changing the calculation semantics or quote data.
 - Underlyings with fewer than 21 completed daily closes have no HV20, so their
   theoretical price and HV-based Greek fallback remain unavailable.
 - The database integration tests and live/demo workflow require a reachable
