@@ -37,7 +37,8 @@ func main() {
 		tsetmc.WithRateLimit(cfg.TSETMCRateLimit),
 	)
 	repo := market.NewRepository(db)
-	collector := market.NewCollector(src, repo, slog.Default())
+	collector := market.NewCollector(src, repo, slog.Default(),
+		market.WithRiskFreeRate(cfg.RiskFreeRate))
 	marketH := market.NewHandler(collector, repo)
 
 	// Optional background scheduler, enabled by COLLECT_INTERVAL.
@@ -45,7 +46,7 @@ func main() {
 		go collector.Run(ctx, cfg.CollectInterval)
 	}
 
-	r := httpapi.NewRouter(db, marketH)
+	r := httpapi.NewRouter(db, marketH, cfg.CORSAllowedOrigins)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		slog.Error("server", "err", err)
 	}

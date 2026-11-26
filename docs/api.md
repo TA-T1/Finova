@@ -50,15 +50,27 @@ behind the same interface so they can be fleshed out later without wider changes
 
 ## HTTP endpoints (`/api/v1`)
 
+> The agreed final request/response shapes, including the strategy and backtest
+> endpoints, are in [api-contract.md](api-contract.md). Where it differs from the
+> table below, it wins.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET`  | `/health` | Liveness + DB ping |
-| `POST` | `/market/collect/options` | Run one option-chain collection pass; returns counts (`rows`, `underlyings`, `contracts`, `quotes`, `errors`) |
+| `POST` | `/market/collect/options` | Run one option-chain collection pass; returns counts (`rows`, `underlyings`, `contracts`, `quotes`, `metrics`, `errors`; `metrics` is the number of calculated rows stored, see [calculation-layer.md](calculation-layer.md)) |
 | `POST` | `/market/collect/daily/:insCode?adjusted=true` | Backfill an underlying's daily history |
-| `GET`  | `/market/options?underlying=<sym>&type=call\|put&underlyingKind=stock\|fund\|index\|other&limit=<n>` | Stored contracts joined with their latest quote |
+| `GET`  | `/market/options?underlying=<sym>&underlyingKind=stock\|fund\|index\|other&type=call\|put&expiry=YYYY-MM-DD&sort=<field>&order=asc\|desc&page=1&pageSize=50` | Latest quotes and calculated metrics, filtered and paged (`limit` is a deprecated `pageSize` alias) |
 | `GET`  | `/market/underlyings?kind=stock\|fund\|index\|other` | Known underlyings (optionally filtered by kind) |
+| `GET`  | `/market/expiries?underlying=<sym>` | Active expiries and days to expiry, optionally filtered by underlying |
 | `GET`  | `/market/chain?underlying=<sym>&expiry=YYYY-MM-DD` | One expiry's strike rows, pairing each listed call and put |
-| `GET`  | `/market/symbol/:symbol` | Underlying quote, active expiries, open-interest summary/chart data, and max pain |
+| `GET`  | `/market/underlyings/:symbol` | Underlying quote, active expiries, open-interest summary/chart data, and max pain |
+| `GET`  | `/market/symbol/:symbol` | Deprecated alias for `/market/underlyings/:symbol` |
+
+`/market/options` returns `{ items, count, page, pageSize, total, totalPages }`.
+`items` contain the latest quote and calculated fields, with unavailable values
+as `null`. Sorting and pagination are applied by the database; null sort values
+remain last in either direction. The option chain keeps its nested strikes and
+adds top-level days to expiry and underlying price.
 
 The chain response has a `strikes` array; each row contains `strikePrice` and a
 `call` and/or `put` object (a missing side is `null`). Expiries are Gregorian
@@ -95,6 +107,7 @@ A re-collection never downgrades a known kind back to `other`.
 | Var | Default | Meaning |
 |---|---|---|
 | `TSETMC_BASE_URL` | `https://cdn.tsetmc.com/api` | API base (no trailing slash) |
+| `CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:5173` | Comma-separated browser origins allowed by the API |
 | `TSETMC_USER_AGENT` | built-in desktop UA | override UA sent to TSETMC |
 | `COLLECT_INTERVAL` | *(empty = off)* | enable background collector, e.g. `60s`, `2m` |
 

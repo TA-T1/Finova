@@ -14,6 +14,18 @@ function Landing() {
 				>
 					Temp route
 				</button>
+				<button
+					className="text-white bg-sky-600 rounded-md p-2 cursor-pointer"
+					onClick={() => Navigate("/market-watch")}
+				>
+					دیده‌بان بازار
+				</button>
+				<button
+					className="text-white bg-sky-600 rounded-md p-2 cursor-pointer"
+					onClick={() => Navigate("/chain")}
+				>
+					زنجیره اختیار
+				</button>
 			</div>
 			<p className="text-5xl text-center ">This is your landing</p>
 		</div>

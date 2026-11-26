@@ -133,3 +133,52 @@ export const loginService = async (
 ---
 
 ✅ You’re ready to start coding!
+
+---
+
+## 📈 Market watch and option chain (mock data)
+
+Two pages, in Persian and right-to-left:
+
+| Route | Page |
+|---|---|
+| `/market-watch` | table of all option contracts: sorting, filters, pagination, 30-second refresh |
+| `/chain?symbol=خودرو&expiry=2026-11-27` | calls and puts of one underlying and expiry, around the strike |
+| `/symbol/:symbol` | placeholder |
+
+There is **no backend for these pages yet**, so they run on mock data by default.
+
+### Mock mode
+
+Copy `.env.example` to `.env` to change the settings.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `VITE_USE_MOCK` | `true` | `false` calls the real backend (**not tested against a server yet**) |
+| `VITE_API_BASE_URL` | `http://localhost:8080` | backend origin, used when mock mode is off |
+
+In mock mode, add a switch to the page URL to see the other states:
+
+| URL switch | Shows |
+|---|---|
+| `?mockError=1` | every request fails: the error state with the retry button |
+| `?mockEmpty=1` | every list is empty: the empty state |
+
+The mock market (4 underlyings, 144 contracts) moves a little on every refresh. Sorting,
+filtering and paging are done in `src/mocks/`, the same way the server is expected to do them.
+
+### Where things are
+
+```
+src/types/marketTypes.ts       every API shape, in one place (update this when the API is final)
+src/services/marketService.ts  typed API functions; the ONLY place that decides mock or real
+src/mocks/                     mock market + mock API (safe to keep for demos)
+src/hooks/useMarketQueries.ts  data hooks: 30 s refresh, pause while the tab is hidden
+src/components/Custom/         shared components: NumberCell, ChangeBadge, OptionTypeBadge,
+                               MoneynessBadge, RefreshIndicator, SearchableSelect, Pagination,
+                               DataStates (skeleton, error, empty)
+src/pages/MarketWatch, Chain   the two pages
+```
+
+What the backend has to provide for the real API: `docs/frontend-api-requests.md`.
+

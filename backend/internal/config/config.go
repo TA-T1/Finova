@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Port        string
-	DatabaseURL string
+	Port               string
+	DatabaseURL        string
+	CORSAllowedOrigins []string
 
 	// TSETMCBaseURL overrides the TSETMC API base (no trailing slash).
 	TSETMCBaseURL string
@@ -32,7 +34,14 @@ type Config struct {
 	// CollectInterval, when > 0, enables the background option-chain collector
 	// at that cadence. Zero (the default) disables the scheduler.
 	CollectInterval time.Duration
+	// RiskFreeRate is the annual risk-free rate, as a decimal fraction (0.30 =
+	// 30%), used by the option calculation layer. Default 0.30.
+	RiskFreeRate float64
 }
+
+// defaultRiskFreeRate is used when RISK_FREE_RATE is not set. It matches
+// market.DefaultRiskFreeRate.
+const defaultRiskFreeRate = 0.30
 
 // Load reads the full application config. DATABASE_URL is required.
 func Load() (*Config, error) {
@@ -43,6 +52,14 @@ func Load() (*Config, error) {
 	cfg.DatabaseURL = os.Getenv("DATABASE_URL")
 	if cfg.DatabaseURL == "" {
 		return nil, fmt.Errorf("DATABASE_URL is required")
+	}
+	cfg.RiskFreeRate = defaultRiskFreeRate
+	if v := os.Getenv("RISK_FREE_RATE"); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 || f >= 1 {
+			return nil, fmt.Errorf("invalid RISK_FREE_RATE %q: want a decimal fraction in [0, 1) such as 0.30 for 30%%", v)
+		}
+		cfg.RiskFreeRate = f
 	}
 	if v := os.Getenv("COLLECT_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -61,6 +78,7 @@ func LoadSource() (*Config, error) {
 	_ = godotenv.Load()
 	cfg := &Config{
 		Port:               getenv("APP_PORT", "8080"),
+		CORSAllowedOrigins: splitCSV(getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")),
 		TSETMCBaseURL:      os.Getenv("TSETMC_BASE_URL"),
 		TSETMCUserAgent:    os.Getenv("TSETMC_USER_AGENT"),
 		TSETMCRateLimit:    2,
@@ -104,6 +122,17 @@ func LoadSource() (*Config, error) {
 		cfg.TSETMCRateLimit = f
 	}
 	return cfg, nil
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if origin := strings.TrimSpace(part); origin != "" {
+			out = append(out, origin)
+		}
+	}
+	return out
 }
 
 func getenv(k, def string) string {

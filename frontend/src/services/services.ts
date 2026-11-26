@@ -13,7 +13,10 @@ import type {
 	PutParams,
 } from "../types/apiTypes";
 
-export const baseURL = "http://1.2.3.4:8000"; // backend URL
+// Backend origin. Set VITE_API_BASE_URL (see .env.example); the default is the
+// Go server's default port.
+export const baseURL: string =
+	import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 
 const apiClient: AxiosInstance = axios.create({
 	baseURL,
