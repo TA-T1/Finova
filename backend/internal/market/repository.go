@@ -107,6 +107,10 @@ func (r *Repository) UpsertContract(ctx context.Context, p ContractParams) (int,
 // InsertOptionQuote writes a quote snapshot for a contract at ts. Re-collecting
 // within the same timestamp overwrites that snapshot rather than erroring.
 func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts time.Time, leg datasource.OptionLeg) error {
+	var prevClose *int64
+	if leg.Yesterday != 0 {
+		prevClose = &leg.Yesterday
+	}
 	const q = `
 		INSERT INTO option_quotes
 			(contract_id, ts, last_price, close_price, best_bid, best_ask,
@@ -125,7 +129,7 @@ func (r *Repository) InsertOptionQuote(ctx context.Context, contractID int, ts t
 			prev_close    = EXCLUDED.prev_close`
 	_, err := r.db.Exec(ctx, q,
 		contractID, ts, leg.Last, leg.Close, leg.BestBid, leg.BestAsk,
-		leg.BidVolume, leg.AskVolume, leg.Volume, leg.Value, leg.OpenInterest, leg.Yesterday)
+		leg.BidVolume, leg.AskVolume, leg.Volume, leg.Value, leg.OpenInterest, prevClose)
 	return err
 }
 
@@ -208,75 +212,6 @@ func (r *Repository) ListUnderlyings(ctx context.Context, kind string) ([]Underl
 			return nil, err
 		}
 		out = append(out, u)
-	}
-	return out, rows.Err()
-}
-
-// OptionChainRow is a contract plus its latest quote, for API clients.
-type OptionChainRow struct {
-	ContractID     int        `json:"contractId"`
-	Symbol         string     `json:"symbol"`
-	UnderlyingID   int        `json:"underlyingId"`
-	UnderlyingSym  string     `json:"underlyingSymbol"`
-	UnderlyingKind string     `json:"underlyingKind"`
-	OptionType     string     `json:"optionType"`
-	StrikePrice    int64      `json:"strikePrice"`
-	ExpiryDate     time.Time  `json:"expiryDate"`
-	ContractSize   int        `json:"contractSize"`
-	LastPrice      *int64     `json:"lastPrice"`
-	ClosePrice     *int64     `json:"closePrice"`
-	BestBid        *int64     `json:"bestBid"`
-	BestAsk        *int64     `json:"bestAsk"`
-	Volume         *int64     `json:"volume"`
-	OpenInterest   *int64     `json:"openInterest"`
-	QuoteTS        *time.Time `json:"quoteTs"`
-}
-
-// ChainFilter narrows a chain query. Zero-value fields are ignored.
-type ChainFilter struct {
-	UnderlyingSymbol string
-	UnderlyingKind   string
-	OptionType       string
-	Limit            int
-}
-
-// ListOptionChain returns contracts joined with their most recent quote.
-func (r *Repository) ListOptionChain(ctx context.Context, f ChainFilter) ([]OptionChainRow, error) {
-	limit := f.Limit
-	if limit <= 0 || limit > 5000 {
-		limit = 1000
-	}
-	const q = `
-		SELECT c.id, c.symbol, u.id, u.symbol, u.kind, c.option_type, c.strike_price,
-		       c.expiry_date, c.contract_size,
-		       q.last_price, q.close_price, q.best_bid, q.best_ask,
-		       q.volume, q.open_interest, q.ts
-		FROM option_contracts c
-		JOIN underlyings u ON u.id = c.underlying_id
-		LEFT JOIN option_quotes_latest q ON q.contract_id = c.id
-		WHERE ($1 = '' OR u.symbol = $1)
-		  AND ($2 = '' OR c.option_type::text = $2)
-		  AND ($3 = '' OR u.kind::text = $3)
-		ORDER BY u.symbol, c.expiry_date, c.strike_price, c.option_type
-		LIMIT $4`
-	rows, err := r.db.Query(ctx, q, f.UnderlyingSymbol, f.OptionType, f.UnderlyingKind, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []OptionChainRow
-	for rows.Next() {
-		var o OptionChainRow
-		if err := rows.Scan(
-			&o.ContractID, &o.Symbol, &o.UnderlyingID, &o.UnderlyingSym, &o.UnderlyingKind, &o.OptionType,
-			&o.StrikePrice, &o.ExpiryDate, &o.ContractSize,
-			&o.LastPrice, &o.ClosePrice, &o.BestBid, &o.BestAsk,
-			&o.Volume, &o.OpenInterest, &o.QuoteTS,
-		); err != nil {
-			return nil, err
-		}
-		out = append(out, o)
 	}
 	return out, rows.Err()
 }
