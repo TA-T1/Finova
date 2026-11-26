@@ -44,7 +44,7 @@ backfill save-market <file.json>    save one live MarketSnapshot (loadable with 
 Taken 2026-11-24 after the close:
 - 1,818 contracts, 30 underlyings.
 - `quote_snapshots`: 59,642 rows, 2026-07-29 to 2026-11-24: history for all current contracts (57,824 rows, 0 failed contracts) plus a real live snapshot of 2026-11-24 (1,818 rows, with bid/ask/open interest) taken with `snapshot run`.
-- `underlying_daily_prices`: 19,009 rows, 2023-11-08 to 2026-11-24. This is the **back-adjusted** three-year series from `data-pipeline/output/underlyings_daily.csv` (rounded to whole rials), with raw prices only after that file's last date (2026-11-07). Reason below.
+- `underlying_daily_prices`: 19,009 rows, 2023-11-08 to 2026-11-24. This is the **back-adjusted** three-year series from `data-pipeline/output/underlyings_daily.csv` (rounded to whole rials), with raw prices only after that file's last date (2026-11-07). Three underlyings that are not in that file (`سامان`, `دوايكس`, `اتكاسا`) have **raw** prices throughout (728, 386 and 185 rows). Reason below.
 - newest option and underlying quotes.
 
 Load into a migrated database:
@@ -89,6 +89,12 @@ the dataset description above (date, row counts, that it includes metrics).
 3. History does not include today; today comes from the live snapshot.
 4. The collector refuses to collect outside market hours (409). Seeding the dev database off-hours required bypassing that guard locally; this was not committed.
 5. Underlying names from the market watch carry Arabic letters (for example `اتكاسا`); not changed here.
+
+6. **Symbols are spelled two ways in `quote_snapshots` (found 2026-11-26).** The backfill (and the collector) keep TSETMC's Arabic `ي`/`ك`; the live
+   snapshot normalizes to Persian letters. In the committed dataset 7 underlyings appear under two spellings and 214 contract symbols of the
+   2026-11-24 live snapshot match no row of `option_contracts`. Backfilled history and the live rows of those contracts do not join, which also affects the
+   backtest engine. Not fixed yet: one spelling must be chosen for the collector, the backfill and the snapshot, and stored rows migrated.
+   Fix this before regenerating the dataset.
 
 ## Limits
 - Only contracts in today's chain, about 60 trading days each; illiquid or new contracts have few rows (1,746 of 1,818 contracts have any history).
