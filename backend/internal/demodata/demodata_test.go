@@ -71,6 +71,11 @@ func seed(t *testing.T, db *pgxpool.Pool) {
 		 SELECT id, '2026-11-24 09:30+03:30', 500, 1, 9 FROM option_contracts`,
 		`INSERT INTO option_quotes (contract_id, ts, last_price, volume, open_interest)
 		 SELECT id, '2026-11-24 10:30+03:30', 520, 2, 9 FROM option_contracts`,
+		// two metric rows for one contract: only the newest is exported
+		`INSERT INTO option_metrics (contract_id, ts, underlying_price, days_to_expiry, risk_free_rate, moneyness, intrinsic_value, delta)
+		 SELECT id, '2026-11-24 09:30+03:30', 2400, 29, 0.3, 'ITM', 400, 0.7 FROM option_contracts`,
+		`INSERT INTO option_metrics (contract_id, ts, underlying_price, days_to_expiry, risk_free_rate, market_price, price_source, moneyness, intrinsic_value, implied_vol, delta)
+		 SELECT id, '2026-11-24 10:30+03:30', 2450, 29, 0.3, 520, 'last', 'ITM', 450, 0.41, 0.83 FROM option_contracts`,
 		`INSERT INTO underlying_quotes (underlying_id, ts, last_price) SELECT id, '2026-11-24 10:30+03:30', 2450 FROM underlyings`,
 		`INSERT INTO quote_snapshots (trade_date, contract_symbol, underlying_symbol, option_type, strike, expiry, captured_at)
 		 VALUES ('2026-11-23', 'ضخود1', 'خودرو', 'call', 2000, '2026-12-23', now())`,
@@ -92,7 +97,7 @@ func TestExportThenImportRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]int64{"underlyings": 1, "underlying_daily_prices": 5, "option_contracts": 1,
-		"option_quotes": 1, "underlying_quotes": 1, "quote_snapshots": 1}
+		"option_quotes": 1, "option_metrics": 1, "underlying_quotes": 1, "quote_snapshots": 1}
 	for name, n := range want {
 		if exp[name] != n {
 			t.Errorf("exported %s = %d, want %d", name, exp[name], n)
@@ -112,6 +117,17 @@ func TestExportThenImportRoundTrip(t *testing.T) {
 	var last int64
 	if err := dst.QueryRow(ctx, `SELECT last_price FROM option_quotes`).Scan(&last); err != nil || last != 520 {
 		t.Errorf("newest quote = %d, %v; want 520", last, err)
+	}
+
+	var iv, delta, price float64
+	var source string
+	var theoretical *float64
+	if err := dst.QueryRow(ctx, `SELECT implied_vol, delta, market_price, price_source, theoretical_price FROM option_metrics`).
+		Scan(&iv, &delta, &price, &source, &theoretical); err != nil {
+		t.Fatalf("metrics: %v", err)
+	}
+	if iv != 0.41 || delta != 0.83 || price != 520 || source != "last" || theoretical != nil {
+		t.Errorf("newest metrics = iv %v delta %v price %v %q theoretical %v", iv, delta, price, source, theoretical)
 	}
 
 	// New rows must not collide with the loaded ids.
@@ -137,5 +153,45 @@ func TestImportMissingFileFailsBeforeTouchingTheDatabase(t *testing.T) {
 	db := testDB(t)
 	if _, err := Import(context.Background(), db, t.TempDir(), true); err == nil {
 		t.Fatal("want an error for an empty directory")
+	}
+}
+
+func TestImportDatasetWithoutMetricsFile(t *testing.T) {
+	ctx := context.Background()
+	src := testDB(t)
+	seed(t, src)
+	dir := t.TempDir()
+	if _, err := Export(ctx, src, dir); err != nil {
+		t.Fatal(err)
+	}
+	// A dataset made before option_metrics was part of it.
+	if err := os.Remove(filepath.Join(dir, "option_metrics.csv.gz")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := testDB(t)
+	for _, replace := range []bool{false, true} {
+		imp, err := Import(ctx, dst, dir, replace)
+		if err != nil {
+			t.Fatalf("import (replace=%v): %v", replace, err)
+		}
+		if _, ok := imp["option_metrics"]; ok || imp["quote_snapshots"] != 1 {
+			t.Errorf("counts = %v", imp)
+		}
+	}
+	var n int
+	if err := dst.QueryRow(ctx, `SELECT count(*) FROM option_metrics`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("option_metrics rows = %d, %v; want 0", n, err)
+	}
+}
+
+func TestCommittedDemoDatasetImports(t *testing.T) {
+	db := testDB(t)
+	counts, err := Import(context.Background(), db, "../../testdata/demo", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if counts["option_contracts"] == 0 || counts["quote_snapshots"] == 0 {
+		t.Errorf("counts = %v", counts)
 	}
 }
