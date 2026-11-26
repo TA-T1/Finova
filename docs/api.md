@@ -336,6 +336,10 @@ The committed copy is in `backend/testdata/demo/`, taken on 2026-11-24 after the
 `underlying_daily_prices` holds the **back-adjusted** three-year series of `data-pipeline/output/underlyings_daily.csv` (rounded to whole rials),
 not the raw series, because raw prices have jumps at capital increases that would show up as volatility in HV20. Load it with:
 
+Migration `000012_backtest_run_details` adds the JSONB `metrics`, `trades` and
+`skipped` fields to `backtest_runs` for strategy backtests. The migration loop
+below applies it along with the rest of the schema.
+
 ```bash
 for f in backend/migrations/*.up.sql; do psql "$DATABASE_URL" -f "$f"; done   # or your migration tool
 cd backend && go run ./cmd/backfill import testdata/demo
