@@ -8,12 +8,12 @@
 		direction: ltr;
 	}
 	.vazir {
-		font-family: "Vazir", sans-serif;
+		font-family: "Vazirmatn Variable", "Vazir", sans-serif;
 	}
 }
 
 :root {
-	font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+	font-family: "Vazirmatn Variable", system-ui, Avenir, Helvetica, Arial, sans-serif;
 	line-height: 1.5;
 	font-weight: 400;
 
