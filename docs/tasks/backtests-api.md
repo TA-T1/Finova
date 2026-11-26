@@ -45,11 +45,7 @@ curl "http://localhost:8080/api/v1/backtests/1"
 
 ## Verification
 
-Verification includes unit tests for query parsing, key conversion, status
-responses, null metrics, combined repository filters, detail 404, and a
-snake_case stored run compared against the frontend mock fixture.
-
-Checks required for completion:
+Verified with:
 
 ```bash
 go build ./...
@@ -57,9 +53,25 @@ go vet ./...
 go test ./...
 ```
 
-Database tests use `TEST_DATABASE_URL` and throwaway schemas; they skip when
-the variable is unset. The temporary PostgreSQL 17 database used for this work
-can apply every migration from `backend/migrations/*.up.sql`.
+The suite passed after rebasing on latest `origin/main`.
+
+PostgreSQL 17 verification used a temporary cluster on port 55433. Every
+available `backend/migrations/*.up.sql` migration was applied, and
+`TEST_DATABASE_URL=postgres://postgres@127.0.0.1:55433/Finova?sslmode=disable`
+ran the repository tests in throwaway schemas.
+
+Unit and database tests cover list parsing and limits, combined underlying and
+template filters, exact model filtering, null metrics, detail 404, non-integer
+400 responses, recursive key conversion, and a stored snake_case run compared
+field for field with the frontend mock fixture.
+
+An API process was started with the temporary PostgreSQL database:
+
+- `GET /api/v1/backtests?limit=20` returned HTTP 200:
+  `{"count":0,"items":[]}`.
+- `GET /api/v1/backtests/not-an-int` returned HTTP 400.
+
+The temporary API process and PostgreSQL cluster were stopped and removed.
 
 ## Frontend integration
 
