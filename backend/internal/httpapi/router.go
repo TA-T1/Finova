@@ -7,12 +7,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"Finova/internal/backtest"
 	"Finova/internal/market"
 )
 
 // NewRouter builds the HTTP router. The market handler, when non-nil, mounts the
 // crawl/collection endpoints under /api/v1/market.
-func NewRouter(db *pgxpool.Pool, marketH *market.Handler, allowedOrigins []string) *gin.Engine {
+func NewRouter(db *pgxpool.Pool, marketH *market.Handler, allowedOrigins []string, backtestHandlers ...*backtest.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 	r.Use(corsMiddleware(allowedOrigins))
@@ -28,6 +29,11 @@ func NewRouter(db *pgxpool.Pool, marketH *market.Handler, allowedOrigins []strin
 
 	if marketH != nil {
 		marketH.RegisterRoutes(api)
+	}
+	for _, backtestH := range backtestHandlers {
+		if backtestH != nil {
+			backtestH.RegisterRoutes(api)
+		}
 	}
 	return r
 }

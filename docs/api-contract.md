@@ -394,28 +394,44 @@ Query: `underlying` (symbol), `contractId`, `action` (`enter` or `exit`),
 
 ### 3.2 `GET /backtests` — new
 
-Query: `model` (`modelName`), `limit` (default 20, maximum 100). Newest first.
+Query: `underlying` (`params.underlying`), `template` (the ID after `strategy:`),
+`model` (exact `modelName`), and `limit` (default `100`, maximum `500`). Filters
+may be combined. Runs are newest first.
 
 ```json
 {
   "count": 1,
   "items": [
-    { "id": 4, "modelName": "rsi-meanrev-v1", "startDate": "2023-11-01", "endDate": "2026-11-01",
-      "winRate": 0.56, "maxDrawdown": 0.18, "totalReturn": 0.42, "createdAt": "2026-11-10T09:00:00+03:30" }
+    { "id": 4, "modelName": "strategy:bull-call-spread", "template": "bull-call-spread",
+      "underlying": "خودرو", "startDate": "2023-11-01", "endDate": "2026-11-01",
+      "winRate": 0.56, "maxDrawdown": 0.18, "totalReturn": 0.42,
+      "tradeCount": 90, "avgPnl": 1250000, "modelPricedShare": 1.0,
+      "createdAt": "2026-11-10T09:00:00+03:30" }
   ]
 }
 ```
 
+`template` is `null` for a run whose `modelName` lacks the `strategy:` prefix.
+`underlying` is `null` when `params.underlying` is absent. `tradeCount` is `0`
+when `metrics` is null or has no `trades` key; `avgPnl` and `modelPricedShare`
+are `null` in that case.
+
 ### 3.3 `GET /backtests/:id` — new
 
-The summary above plus `params` (the JSON the run was configured with) and the
-equity curve.
+The list summary above plus `params`, `metrics`, `trades`, `skipped`, and
+`equityCurve`.
 
 ```json
 {
   "id": 4, "modelName": "rsi-meanrev-v1", "startDate": "2023-11-01", "endDate": "2026-11-01",
   "winRate": 0.56, "maxDrawdown": 0.18, "totalReturn": 0.42, "createdAt": "2026-11-10T09:00:00+03:30",
-  "params": { "rsiPeriod": 14 },
+  "template": "bull-call-spread", "underlying": "خودرو",
+  "tradeCount": 90, "avgPnl": 1250000, "modelPricedShare": 1.0,
+  "params": { "underlying": "خودرو", "templateId": "bull-call-spread" },
+  "metrics": { "trades": 90, "winRate": 0.56, "avgPnl": 1250000 },
+  "trades": [ { "expiry": "2026-12-23", "entryDate": "2026-11-23",
+                "legs": [ { "entryPrice": 150, "priceSource": "snapshot" } ] } ],
+  "skipped": [ { "expiry": "2026-12-24", "reason": "no listed chain" } ],
   "equityCurve": [ { "date": "2023-11-01", "equity": 1.0 }, { "date": "2023-11-02", "equity": 1.004 } ]
 }
 ```

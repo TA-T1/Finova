@@ -349,6 +349,27 @@ Note on `adjusted=1`: for these instruments the endpoint returned a single row (
 `POST /market/collect/daily/:insCode?adjusted=true` holds one row per underlying. Use `adjusted=false` (raw) to get the full history.
 Raw prices have one-day jumps at capital increases and dividends.
 
+## Backtest read API (`internal/backtest`)
+
+Saved backtest runs are read-only. The Python pipeline inserts rows; the API does
+not write runs.
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/v1/backtests?underlying=<symbol>&template=<id>&model=<modelName>&limit=<n>` | List saved runs, newest first; default limit `100`, maximum `500` |
+| `GET` | `/api/v1/backtests/:id` | One run with params, metrics, trades, skipped expiries, and equity curve |
+
+Example:
+
+```bash
+curl "http://localhost:8080/api/v1/backtests?underlying=%D8%AE%D9%88%D8%AF%D8%B1%D9%88&template=long-call&limit=20"
+curl "http://localhost:8080/api/v1/backtests/1"
+```
+
+JSON keys are camelCase, including nested keys in params, metrics, trades, legs,
+skipped entries, and equity points. Missing JSON values remain `null`; skipped
+and trades arrays are `[]` when their JSONB columns are null.
+
 ## Offline option metrics recompute (`cmd/metrics`)
 
 After importing quotes without metric rows, recalculate metrics from the stored
