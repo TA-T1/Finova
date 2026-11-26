@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	Port        string
-	DatabaseURL string
+	Port               string
+	DatabaseURL        string
+	CORSAllowedOrigins []string
 
 	// TSETMCBaseURL overrides the TSETMC API base (no trailing slash).
 	TSETMCBaseURL string
@@ -69,10 +71,11 @@ func Load() (*Config, error) {
 func LoadSource() (*Config, error) {
 	_ = godotenv.Load()
 	cfg := &Config{
-		Port:            getenv("APP_PORT", "8080"),
-		TSETMCBaseURL:   os.Getenv("TSETMC_BASE_URL"),
-		TSETMCUserAgent: os.Getenv("TSETMC_USER_AGENT"),
-		TSETMCRateLimit: 2,
+		Port:               getenv("APP_PORT", "8080"),
+		CORSAllowedOrigins: splitCSV(getenv("CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:5173")),
+		TSETMCBaseURL:      os.Getenv("TSETMC_BASE_URL"),
+		TSETMCUserAgent:    os.Getenv("TSETMC_USER_AGENT"),
+		TSETMCRateLimit:    2,
 	}
 	if v := os.Getenv("TSETMC_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -96,6 +99,17 @@ func LoadSource() (*Config, error) {
 		cfg.TSETMCRateLimit = f
 	}
 	return cfg, nil
+}
+
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if origin := strings.TrimSpace(part); origin != "" {
+			out = append(out, origin)
+		}
+	}
+	return out
 }
 
 func getenv(k, def string) string {

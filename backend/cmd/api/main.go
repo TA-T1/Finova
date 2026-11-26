@@ -46,7 +46,7 @@ func main() {
 		go collector.Run(ctx, cfg.CollectInterval)
 	}
 
-	r := httpapi.NewRouter(db, marketH)
+	r := httpapi.NewRouter(db, marketH, cfg.CORSAllowedOrigins)
 	if err := r.Run(":" + cfg.Port); err != nil {
 		slog.Error("server", "err", err)
 	}
