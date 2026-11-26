@@ -25,6 +25,12 @@ type Config struct {
 	TSETMCMaxAttempts int
 	// TSETMCRateLimit is the maximum requests per second (default 2; 0 = unlimited).
 	TSETMCRateLimit float64
+	// SnapshotTime is the daily snapshot time in Asia/Tehran, "HH:MM" (default 13:00).
+	SnapshotTime string
+	// SnapshotTries is the total attempts per day when a snapshot fails (default 3).
+	SnapshotTries int
+	// SnapshotRetryDelay is the wait between failed attempts (default 5m).
+	SnapshotRetryDelay time.Duration
 	// CollectInterval, when > 0, enables the background option-chain collector
 	// at that cadence. Zero (the default) disables the scheduler.
 	CollectInterval time.Duration
@@ -76,6 +82,9 @@ func LoadSource() (*Config, error) {
 		TSETMCBaseURL:      os.Getenv("TSETMC_BASE_URL"),
 		TSETMCUserAgent:    os.Getenv("TSETMC_USER_AGENT"),
 		TSETMCRateLimit:    2,
+		SnapshotTime:       getenv("SNAPSHOT_TIME", "13:00"),
+		SnapshotTries:      3,
+		SnapshotRetryDelay: 5 * time.Minute,
 	}
 	if v := os.Getenv("TSETMC_TIMEOUT"); v != "" {
 		d, err := time.ParseDuration(v)
@@ -90,6 +99,20 @@ func LoadSource() (*Config, error) {
 			return nil, fmt.Errorf("invalid TSETMC_MAX_ATTEMPTS %q: want an integer >= 1", v)
 		}
 		cfg.TSETMCMaxAttempts = n
+	}
+	if v := os.Getenv("SNAPSHOT_TRIES"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("invalid SNAPSHOT_TRIES %q: want an integer >= 1", v)
+		}
+		cfg.SnapshotTries = n
+	}
+	if v := os.Getenv("SNAPSHOT_RETRY_DELAY"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			return nil, fmt.Errorf("invalid SNAPSHOT_RETRY_DELAY %q: want a positive duration like 5m", v)
+		}
+		cfg.SnapshotRetryDelay = d
 	}
 	if v := os.Getenv("TSETMC_RATE_LIMIT"); v != "" {
 		f, err := strconv.ParseFloat(v, 64)

@@ -52,6 +52,8 @@ type DailyPrice struct {
 	Final  int64 // weighted settlement price ("قیمت پایانی")
 	Volume int64 // traded quantity
 	Value  int64 // traded value (Rial)
+	// TradeCount is the number of trades (TSETMC zTotTran); 0 when unknown.
+	TradeCount int64
 }
 
 // OptionLeg is one side (call or put) of an option row: its identity plus its
@@ -95,6 +97,10 @@ type OptionRow struct {
 
 // Source is a provider of options-market data. A provider need not implement
 // every method; unsupported ones return ErrNotSupported.
+//
+// New code that needs the whole option market at once (the daily snapshot, a
+// collection service) should depend on MarketSource (market.go), also available
+// as source.Source. This interface stays as it is, for the collector.
 type Source interface {
 	// Name is a short identifier for the provider, e.g. "tsetmc".
 	Name() string

@@ -126,6 +126,12 @@ contract for these structs. Prices are `float64` here (the older
 00:00 `Asia/Tehran`; missing numbers are `0`; `LastTradeTime` is `nil` when
 unknown.
 
+**Names.** The brief calls these `internal/source`, `source.Source`, `source.NewFake`... They are available under exactly those names:
+`internal/source` is a thin package of type aliases over `internal/datasource` (`source.Source` *is* `datasource.MarketSource`), so the two names are interchangeable.
+Nothing was renamed or removed: `datasource.Source`, `OptionRow`, the `tsetmc` client and the collector that use them are unchanged.
+New code (the snapshot, the collection service) should import `internal/source`.
+Only `cmd/...` may build the TSETMC client; a test (`internal/source`) fails if a library package imports it or mentions a TSETMC host.
+
 ### FakeSource (offline development)
 
 ```go
@@ -141,11 +147,11 @@ the right shape and are not real market prices.
 
 ### Live implementation: `tsetmc.Client.FetchMarket`
 
-One request, `GET /Instrument/GetInstrumentOptionMarketWatch/0`, is one
-snapshot. Each response row holds a call, a put and the underlying's quote;
-the adapter splits it into `OptionContract`s and de-duplicated
-`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on
-2026-11-15).
+`GET /Instrument/GetInstrumentOptionMarketWatch/0` gives the snapshot. Each response row holds a call,
+a put and the underlying's quote; the adapter splits it into `OptionContract`s and de-duplicated
+`UnderlyingQuote`s (about 900 rows give 1,800 contracts and 28 underlyings on 2026-11-15).
+The chain has no names, no underlying volume and no trade times, so `FetchMarket` then makes
+two more requests to fill them (see "Enrichment" below). Those are best effort: if they fail, the chain is still returned.
 
 | Our field | TSETMC field |
 |---|---|
@@ -160,10 +166,24 @@ the adapter splits it into `OptionContract`s and de-duplicated
 | `Volume` / `Value` / `TradeCount` / `OpenInterest` | `qTotTran5J` / `qTotCap` / `zTotTran` / `oP` |
 | underlying `SourceID`, `LastPrice`, `ClosePrice`, `PrevClose` | `uaInsCode`, `pDrCotVal_UA`, `pClosing_UA`, `priceYesterday_UA` |
 
-Limits of this endpoint (left at their zero values):
-- `LastTradeTime` is always `nil` (not provided).
-- Underlying `Volume` is `0` and `Name` equals `Symbol` (only the short symbol is provided).
-  Full names are available from `GetInstrumentInfo/{insCode}`, but that would be one extra request per underlying.
+The chain endpoint itself lacks `LastTradeTime`, underlying `Volume` and underlying `Name`. They come from the enrichment below.
+
+#### Enrichment (2 extra requests per snapshot)
+
+| Request | Gives | Notes |
+|---|---|---|
+| `GET /ClosingPrice/GetMarketWatch?market=0&paperTypes[0..8]=1..9&showTraded=false&withBestLimits=false&hEven=0&RefID=0` | for every instrument: full name `lvc`, volume `qtj`, last trade time of day `hEven` (`HHMMSS`, no date) | about 3.7 MB and 1.2 s. `dEven` is always 0 here. |
+| `GET /ClosingPrice/GetClosingPriceInfo/{insCode}` for the most traded underlying | the date of the latest trading session, `dEven` (fallback `finalLastDate`) | about 40 ms |
+
+- `UnderlyingQuote.Name` = `lvc` (normalized), `Volume` = `qtj`. An underlying absent from the watch
+  (the real capture has one, وبصادر, a halted symbol) keeps `Name` = `Symbol` and `Volume` = `0`.
+- `OptionContract.LastTradeTime` = session date + `hEven`, but only for contracts whose chain `Volume` is > 0.
+  Contracts that did not trade keep `nil`. Their `hEven` is only a pre-open marker such as `061038`.
+  Times before 09:00 are rejected.
+- In the real capture, 1,000 of the 1,001 traded contracts have a time between 09:00 and 12:30.
+  One (ضموج844) reports 14:19:20, probably an exercise or settlement update.
+- If either request fails, a warning `enrichment failed` is logged and the unfilled fields stay at their defaults.
+  If only the closing-info request fails, names and volume are still filled.
 
 Behaviour:
 - **Normalization:** Arabic `ي`/`ك` become `ی`/`ک`, Persian and Arabic digits become ASCII,
@@ -187,29 +207,139 @@ Tests run offline against `httptest.Server` serving `testdata/tsetmc_option_watc
 
 ### Historical option prices
 
-TSETMC's `GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/{adjusted}` is keyed by instrument code,
-and `Client.DailyPrices` already accepts any code, so it should also work with an option contract's `insCode`.
-**This has not been verified against a real option `insCode`.** It matters for the Sprint 3 decision, so check it first.
-The chain endpoint above returns only the current day.
+**Yes, TSETMC serves option price history.** Verified in the browser on 2026-11-15 with
+`GET /ClosingPrice/GetClosingPriceDailyList/{insCode}/0`, the same endpoint `Client.DailyPrices` already wraps:
+
+| Instrument | Rows | Range |
+|---|---|---|
+| active call ضهرم8030 (`61500711433740234`) | 61 | 2026-08-19 .. 2026-11-14 (since listing) |
+| its put طهرم8030 (`58980125072230074`) | 61 | 2026-08-19 .. 2026-11-14 |
+| underlying اهرم | 1,175 | 2021-12-20 .. 2026-11-14 |
+
+Each row has `dEven`, `priceFirst`, `priceMax`, `priceMin`, `pDrCotVal` (last), `pClosing`, `priceYesterday`,
+`qTotTran5J` (volume), `qTotCap` (value) and `zTotTran` (trade count).
+
+What this means for the Sprint 3 backfill:
+- **Missing from history:** bid, ask and open interest, which exist only in the live chain. `quote_snapshots` rows backfilled from here can fill
+  `close_price`, `last_price`, `volume`, `value`, `trade_count` and `underlying_price` (joined from the underlying's own history by date),
+  but must leave bid/ask/open interest at 0 or NULL.
+- **Reach:** a contract's history starts at its listing, so about 60 days for a current contract. Contracts that have already expired do not appear in the
+  chain, so their `insCode`s are unknown. Backfilling them would need another way to list them (not investigated).
+- **Today is not included:** the latest row is yesterday's. Today comes from the live snapshot.
+- **`adjusted=1`:** returned a single row for the options and the underlying in this check, so use `adjusted=0` for options.
+- **Cost:** one request per contract (about 1,800), so a full backfill of the current contracts needs about 1,800 requests, around 15 minutes at the default 2 requests per second.
 
 ### Known limitations and future work
 
-The TSETMC option-chain endpoint does not provide these fields. We chose to leave them
-unfilled for now (decision: 2026-11-15), because nothing downstream needs them yet.
+| Item | Status |
+|---|---|
+| `LastTradeTime`, underlying `Name` and `Volume` | **Filled by the enrichment requests** (decision 2026-11-15: first left unfilled, then fixed after finding the endpoints in the browser). They are unset only when those requests fail, or for a contract that did not trade (`nil`), or an underlying missing from the market watch (`Name` = `Symbol`, `Volume` = `0` meaning *unknown*). Callers should not store `Volume` = 0 as a real value. |
+| Existing callers of the TSETMC client | The retry/timeout/rate-limit layer applies to the **existing** methods too (`OptionMarketWatch`, `DailyPrices`, `InstrumentInfo`), so the collector gets it for free. New defaults: 10 s per request (was 30 s), 3 attempts (was 1), 2 requests per second (was unlimited). A custom `http.Client` passed with `WithHTTPClient` keeps its own `Timeout`. To restore the old behaviour set `TSETMC_TIMEOUT=30s`, `TSETMC_MAX_ATTEMPTS=1` and `TSETMC_RATE_LIMIT=0`. |
+| Trade date on a holiday | **Unverified.** The enrichment takes the date from `GetClosingPriceInfo.dEven`, and it was only observed on a trading day (2026-11-15). We expect it to stay at the last session's date on Thursday, Friday and holidays, but nobody has checked yet. The snapshot has a guard for this case (see "How a non-trading day is detected"). Run `bash backend/scripts/verify_live.sh` on a Thursday or Friday (the next one is 2026-11-19): it fails if `dEven` equals today on a closed day. On 2026-11-15 (a trading day) it passed its other checks against the live source. |
+| Cost | Each snapshot now downloads about 3.7 MB more (the market watch). At a 30-60 s polling cadence, consider calling it less often or caching the names. |
+| Names of contracts' underlyings not in the market watch | Fall back to the symbol. The collector gets full names from `GetInstrumentInfo` when it creates an underlying. |
+| Real samples | `backend/testdata/tsetmc_market_watch.json` is the real market watch, **trimmed** to the instruments in the option chain (1,458 rows) with the best-limits ladder (`blDs`) removed, to keep it at about 0.8 MB. `tsetmc_closing_price_info.json` is the closing info of اهرم. `capture_tsetmc_samples.sh` fetches the untrimmed originals. |
 
-| Field | Value today | Guidance for callers |
+## Daily end-of-day snapshot (`cmd/snapshot`, `internal/snapshot`)
+
+`quote_snapshots` keeps one row per contract per trading day (migration
+`000008_quote_snapshots`; **new migration, the backend team should review it**).
+`option_quotes` holds intraday ticks only, so this table is our real price history for the backtest.
+It may be the only history we get (see "Historical option prices" above: history exists for about the last 60 days of current contracts, without bid/ask/open interest).
+
+| Column | Notes |
+|---|---|
+| `trade_date` | Tehran calendar date of the trading day. With `contract_symbol` it is the primary key, the upsert target. |
+| `contract_symbol`, `underlying_symbol`, `option_type` (`call`/`put`), `strike`, `expiry` | Contract identity. |
+| `close_price`, `last_price`, `bid_price`, `ask_price` | `bid_price` and `ask_price` are as of `captured_at`. |
+| `volume`, `value`, `trade_count`, `open_interest` | `0` means the source had no figure or nothing traded. |
+| `underlying_price` | The underlying's last price at `captured_at`, joined by underlying symbol. **`NULL` when unknown** (no matching underlying, or a last price of 0). Treat NULL as "do not use this row for pricing". |
+| `captured_at` | The adapter's `FetchedAt`. |
+
+Money columns are `BIGINT` rials, like the rest of the schema.
+
+```bash
+go run ./cmd/snapshot run      # one snapshot now, then exit
+go run ./cmd/snapshot daemon   # a snapshot every day at SNAPSHOT_TIME, until SIGINT/SIGTERM
+```
+
+| Var | Default | Meaning |
 |---|---|---|
-| `OptionContract.LastTradeTime` | always `nil` | Timestamp quotes with `MarketSnapshot.FetchedAt`. The real value would need one request per contract (about 1,800 per snapshot), which does not fit a 30-60s cadence. |
-| `UnderlyingQuote.Volume` | always `0`, meaning **unknown** | Do not store it. If you must write the column, write `NULL` when it is `0`. |
-| `UnderlyingQuote.Name` | equals `Symbol` | Do not overwrite a stored full name with it. The collector already gets full names from `GetInstrumentInfo`. |
+| `SNAPSHOT_TIME` | `13:00` | daily run time, `HH:MM` in Asia/Tehran (the market closes at about 12:30) |
+| `SNAPSHOT_TRIES` | `3` | total attempts per day if a run fails |
+| `SNAPSHOT_RETRY_DELAY` | `5m` | wait between attempts. After the last failed attempt it logs the error and waits for the next day. |
 
-**If underlying volume or full names are needed later:** TSETMC has a market-wide watch endpoint
-that returns volume (`qTotTran5J`) and full name (`lVal30`) for every instrument in a single request.
-The plan would be:
-1. Capture a real sample of that endpoint (extend `backend/scripts/capture_tsetmc_samples.sh`).
-   Its path and shape are **unverified**, because it could not be reached while building this adapter.
-2. Inside `FetchMarket`, make this one extra request and merge the matching instruments by `uaInsCode`.
-   If it fails, return the snapshot without those fields and log a warning. Do not fail the snapshot.
-3. Add a test with the captured sample, and remove the limitation above.
+`snapshot.Run(ctx, src, db)` fetches the market once. It skips non-trading days, joins each contract with its
+underlying price, and writes all rows (about 1,800) in **one transaction**: `COPY` into a temporary staging table, then one
+`INSERT ... ON CONFLICT (trade_date, contract_symbol) DO UPDATE`. A second run on the same day overwrites the first run's values and
+creates no duplicates. Against live TSETMC a run takes 3-5 s, almost all of it the three adapter requests (the market watch is 3.7 MB) at the default 2 requests per second.
+It returns the number of rows written; skipping a non-trading day returns 0, logs `no trading today`, and is not an error.
 
-This costs about one extra request per snapshot. The existing rate limit already covers it.
+### How a non-trading day is detected
+
+The spec says to skip the day when no contract has a last trade time on today's Tehran date.
+The TSETMC adapter fills `LastTradeTime` from its enrichment requests, so that rule is the main one. The checks run in this order:
+1. **A contract has `LastTradeTime`:** trading happened iff one of them falls on today's Tehran date.
+   *Guard:* if that says "yes" but every figure (volume, trade count, last price, close price) is identical to the latest earlier snapshot,
+   the day is still skipped, because a source serving a stale date would otherwise store a duplicate row for a holiday.
+   This guard exists because the date's behaviour on a holiday is unverified (see "Known limitations").
+2. **No contract has a `LastTradeTime` at all** (the enrichment failed, or another source): compare with the latest earlier snapshot in
+   `quote_snapshots`. On a closed day TSETMC keeps serving the last trading day's final numbers, so if no traded contract has a different
+   volume, trade count, last price or close price, the day is skipped. No holiday calendar is needed.
+3. **No earlier snapshot** (the first ever run): Thursday and Friday are skipped, and so is a day on which no contract has volume.
+
+Caveats:
+- **Mid-session runs:** a manual `snapshot run` taken during the session stores partial figures. The 13:00 run overwrites them the same day.
+  But if the next day is a holiday, the final figures then differ from that partial row, and a duplicate row can be written for the holiday.
+  Take manual snapshots after the close.
+- **Missed days:** the daemon only schedules the next 13:00. If it is down at 13:00, that day is missed, and backfilling is out of scope (Sprint 3).
+  After a restart, run `snapshot run` by hand.
+
+## History backfill and demo dataset (`cmd/backfill`)
+
+`quote_snapshots` only gets a row per day from the day the daily snapshot starts running.
+`backfill history` fills the past from TSETMC's per-instrument history
+(`GetClosingPriceDailyList/{insCode}/0`, see "Historical option prices").
+
+```bash
+go run ./cmd/backfill history            # every contract in today's chain, about 15 min at 2 requests/s
+go run ./cmd/backfill history -limit 20  # quick trial
+```
+
+- **What is filled:** `close_price` (settlement price), `last_price`, `volume`, `value`, `trade_count`, and `underlying_price`
+  (the underlying's own history, same date, last price, else settlement price; `NULL` if that day is missing).
+- **What is not:** `bid_price`, `ask_price` and `open_interest` stay `0`, which means *unknown* in this table. A backtest must not use a
+  backfilled row for bid/ask pricing.
+- **Which days:** only days before today in Tehran, never after the contract's expiry, and not days on which the contract did not trade
+  (no volume and no price). Today belongs to the live snapshot.
+- **Never overwrites:** rows are inserted with `ON CONFLICT DO NOTHING` (`snapshot.InsertMissing`), so a live snapshot with bid/ask/open interest
+  always wins, and the command can be run again safely. It writes in batches of 20,000 rows, so an interrupted run keeps its progress.
+- **Reach:** only contracts in the current chain (about 60 trading days each). Expired contracts are not listed, so they are not backfilled.
+- A failed contract is logged and counted (`failed=`), and the run goes on. The summary line prints the counts and the date range.
+
+### Demo dataset (offline)
+
+```bash
+go run ./cmd/backfill export <dir>            # save the market tables to <dir>/*.csv.gz
+go run ./cmd/backfill import [-replace] <dir> # load them (migrations applied first)
+go run ./cmd/backfill save-market file.json   # one live MarketSnapshot, loadable with source.NewFake
+```
+
+The dataset has `underlyings`, `underlying_daily_prices`, `option_contracts`, the newest `option_quotes` row per contract, the newest
+`underlying_quotes` row per underlying, and `quote_snapshots`. `import` refuses a database whose market tables are not empty, unless
+`-replace` is given (it then runs `TRUNCATE ... RESTART IDENTITY CASCADE` on these tables, which also empties tables that reference them).
+It is one transaction, and the id sequences are moved past the loaded ids.
+
+The committed copy is in `backend/testdata/demo/`, taken on 2026-11-24 after the market closed (1,818 contracts, 30 underlyings):
+`quote_snapshots` has 59,642 rows from 2026-07-29 to 2026-11-24 (history for all current contracts, plus a live snapshot of 2026-11-24 with bid/ask/open interest);
+`underlying_daily_prices` holds the **back-adjusted** three-year series of `data-pipeline/output/underlyings_daily.csv` (rounded to whole rials),
+not the raw series, because raw prices have jumps at capital increases that would show up as volatility in HV20. Load it with:
+
+```bash
+for f in backend/migrations/*.up.sql; do psql "$DATABASE_URL" -f "$f"; done   # or your migration tool
+cd backend && go run ./cmd/backfill import testdata/demo
+```
+
+Note on `adjusted=1`: for these instruments the endpoint returned a single row (one day), so a series backfilled with
+`POST /market/collect/daily/:insCode?adjusted=true` holds one row per underlying. Use `adjusted=false` (raw) to get the full history.
+Raw prices have one-day jumps at capital increases and dividends.

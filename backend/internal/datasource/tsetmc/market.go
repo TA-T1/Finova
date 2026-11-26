@@ -12,7 +12,17 @@ import (
 	"Finova/internal/datasource"
 )
 
-const optionWatchPath = "/Instrument/GetInstrumentOptionMarketWatch/0"
+const (
+	optionWatchPath = "/Instrument/GetInstrumentOptionMarketWatch/0"
+	// Market-wide watch (every instrument, ~3.7 MB): full names, underlying
+	// volume and per-instrument last-trade time (hEven).
+	marketWatchPath = "/ClosingPrice/GetMarketWatch?market=0&industrialGroup=" +
+		"&paperTypes[0]=1&paperTypes[1]=2&paperTypes[2]=3&paperTypes[3]=4&paperTypes[4]=5" +
+		"&paperTypes[5]=6&paperTypes[6]=7&paperTypes[7]=8&paperTypes[8]=9" +
+		"&showTraded=false&withBestLimits=false&hEven=0&RefID=0"
+	// Per-instrument closing info: the only place that carries the trade DATE.
+	closingInfoPath = "/ClosingPrice/GetClosingPriceInfo/"
+)
 
 // contractNameRe parses names like "اختیارخ اهرم-56000-1405/08/27" (kind +
 // underlying, strike, Jalali expiry). Used only as a fallback when the
@@ -77,7 +87,131 @@ func (c *Client) FetchMarket(ctx context.Context) (*datasource.MarketSnapshot, e
 	if skipped > 0 {
 		c.log.Warn("tsetmc: some rows were skipped", "skipped", skipped, "total", len(resp.Rows))
 	}
+	// Best effort: the chain alone is a complete, valid snapshot.
+	if err := c.enrich(ctx, snap); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("fetch market: %w", ctx.Err())
+		}
+		c.log.Warn("tsetmc: enrichment failed, returning the snapshot without it "+
+			"(underlying names/volume and last trade times stay unset)", "err", err)
+	}
 	return snap, nil
+}
+
+// watchRow is the part of a GetMarketWatch row we use.
+type watchRow struct {
+	InsCode string    `json:"insCode"`
+	Name    string    `json:"lvc"`   // full name
+	Volume  flexFloat `json:"qtj"`   // traded quantity today
+	HEven   flexInt   `json:"hEven"` // HHMMSS of the last trade/update; date is not included
+}
+
+// enrich fills what the option-chain endpoint lacks, using two more requests:
+//
+//   - GetMarketWatch gives each underlying's full name and volume, and every
+//     instrument's last-trade time of day (hEven, HHMMSS).
+//   - hEven has no date, so one GetClosingPriceInfo call for the most traded
+//     underlying gives the date of the latest trading session (dEven).
+//     A contract with volume > 0 traded in that session, so its
+//     LastTradeTime is that date plus its hEven. Contracts that did not trade
+//     keep nil (their hEven is just a pre-open marker such as 06:10:38).
+//
+// Whatever can be filled is filled; the first problem is returned.
+func (c *Client) enrich(ctx context.Context, snap *datasource.MarketSnapshot) error {
+	b, err := c.getBytes(ctx, marketWatchPath)
+	if err != nil {
+		return fmt.Errorf("market watch: %w", err)
+	}
+	var resp struct {
+		Rows []json.RawMessage `json:"marketwatch"`
+	}
+	if err := json.Unmarshal(b, &resp); err != nil {
+		return fmt.Errorf("market watch: decode: %w", err)
+	}
+	watch := make(map[string]watchRow, len(resp.Rows))
+	for _, raw := range resp.Rows {
+		var w watchRow
+		if err := json.Unmarshal(raw, &w); err != nil {
+			continue // one odd row must not lose the others
+		}
+		if w.InsCode = datasource.NormalizeText(w.InsCode); w.InsCode != "" {
+			watch[w.InsCode] = w
+		}
+	}
+	if len(watch) == 0 {
+		return fmt.Errorf("market watch: no rows")
+	}
+
+	// Underlying names and volume. An underlying missing from the watch (for
+	// example a halted one) keeps Name = Symbol and Volume = 0.
+	refID, refVol := "", 0.0
+	for i := range snap.Underlyings {
+		u := &snap.Underlyings[i]
+		w, ok := watch[u.SourceID]
+		if !ok {
+			continue
+		}
+		if name := datasource.NormalizeText(w.Name); name != "" {
+			u.Name = name
+		}
+		u.Volume = int64(w.Volume)
+		if float64(w.Volume) > refVol {
+			refID, refVol = u.SourceID, float64(w.Volume)
+		}
+	}
+	if refID == "" {
+		return fmt.Errorf("no underlying with volume to take the trade date from")
+	}
+
+	date, err := c.lastSessionDate(ctx, refID)
+	if err != nil {
+		return err
+	}
+	for i := range snap.Contracts {
+		oc := &snap.Contracts[i]
+		w, ok := watch[oc.SourceID]
+		if !ok || oc.Volume <= 0 {
+			continue
+		}
+		if t, ok := timeOnDate(date, int(w.HEven)); ok {
+			oc.LastTradeTime = &t
+		}
+	}
+	return nil
+}
+
+// lastSessionDate returns the Tehran date (00:00) of the latest trading
+// session, from the closing info of one liquid instrument.
+func (c *Client) lastSessionDate(ctx context.Context, insCode string) (time.Time, error) {
+	var resp struct {
+		Info struct {
+			DEven         flexInt `json:"dEven"`
+			FinalLastDate flexInt `json:"finalLastDate"`
+		} `json:"closingPriceInfo"`
+	}
+	if err := c.getJSON(ctx, closingInfoPath+insCode, &resp); err != nil {
+		return time.Time{}, fmt.Errorf("closing info %s: %w", insCode, err)
+	}
+	for _, v := range []flexInt{resp.Info.DEven, resp.Info.FinalLastDate} {
+		if v > 0 {
+			if t, err := datasource.ParseGregorianYMD(strconv.FormatInt(int64(v), 10)); err == nil {
+				return t, nil
+			}
+		}
+	}
+	return time.Time{}, fmt.Errorf("closing info %s: no usable date (dEven=%d, finalLastDate=%d)",
+		insCode, resp.Info.DEven, resp.Info.FinalLastDate)
+}
+
+// timeOnDate combines a Tehran date with a TSETMC HHMMSS integer (123001 is
+// 12:30:01). It rejects invalid values and times before 09:00, which TSETMC
+// uses as pre-open markers (e.g. 061038) for instruments that did not trade.
+func timeOnDate(date time.Time, hhmmss int) (time.Time, bool) {
+	h, m, s := hhmmss/10000, hhmmss/100%100, hhmmss%100
+	if h < 9 || h > 23 || m > 59 || s > 59 {
+		return time.Time{}, false
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), h, m, s, 0, datasource.Tehran), true
 }
 
 // parseRow turns one chain row (call + put + underlying) into contracts and the

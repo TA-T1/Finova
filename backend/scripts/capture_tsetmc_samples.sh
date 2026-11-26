@@ -34,6 +34,13 @@ fetch "$BASE/Instrument/GetInstrumentOptionMarketWatch/0" "$OUT/tsetmc_option_wa
 # 2) Optional extras (اخابر, from data-pipeline/output/underlyings.csv).
 fetch "$BASE/Instrument/GetInstrumentInfo/22811176775480091" "$OUT/tsetmc_instrument_info.json" || true
 
+# 3) Enrichment sources (used by FetchMarket for names, volume and trade times).
+#    The market watch is ~3.7 MB; the adapter's tests use a copy trimmed to the
+#    instruments of the option chain (see docs/api.md).
+PT='paperTypes[0]=1&paperTypes[1]=2&paperTypes[2]=3&paperTypes[3]=4&paperTypes[4]=5&paperTypes[5]=6&paperTypes[6]=7&paperTypes[7]=8&paperTypes[8]=9'
+fetch "$BASE/ClosingPrice/GetMarketWatch?market=0&industrialGroup=&$PT&showTraded=false&withBestLimits=false&hEven=0&RefID=0" "$OUT/tsetmc_market_watch_full.json" || true
+fetch "$BASE/ClosingPrice/GetClosingPriceInfo/17914401175772326" "$OUT/tsetmc_closing_price_info.json" || true
+
 # Sanity check on the main file.
 python3 - "$OUT/tsetmc_option_watch.json" <<'EOF'
 import json, sys
