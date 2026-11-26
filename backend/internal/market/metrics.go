@@ -19,14 +19,16 @@ const (
 	priceSourceClose = "close"
 )
 
-// metricInput is everything computeMetrics needs for one contract in one pass.
-type metricInput struct {
+// MetricInput is everything needed to calculate and store metrics for one quote.
+type MetricInput struct {
 	ContractID   int
 	UnderlyingID int
 	Kind         options.Kind
 	Strike       float64
 	Expiry       time.Time
 	Spot         float64
+	// TS is the quote timestamp, or an explicit timestamp override.
+	TS           time.Time
 
 	// Option prices as reported by the source; 0 means missing.
 	Last  float64
@@ -37,6 +39,8 @@ type metricInput struct {
 	// HV is the HV20 of the underlying, or nil when it is unknown.
 	HV *float64
 }
+
+type metricInput = MetricInput
 
 // OptionMetrics is one calculated row of option_metrics. A nil pointer means
 // "not available" and is stored as NULL.

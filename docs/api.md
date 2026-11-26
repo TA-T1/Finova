@@ -348,3 +348,23 @@ cd backend && go run ./cmd/backfill import testdata/demo
 Note on `adjusted=1`: for these instruments the endpoint returned a single row (one day), so a series backfilled with
 `POST /market/collect/daily/:insCode?adjusted=true` holds one row per underlying. Use `adjusted=false` (raw) to get the full history.
 Raw prices have one-day jumps at capital increases and dividends.
+
+## Offline option metrics recompute (`cmd/metrics`)
+
+After importing quotes without metric rows, recalculate metrics from the stored
+market data without contacting TSETMC or checking market hours:
+
+```bash
+cd backend
+go run ./cmd/metrics recompute
+go run ./cmd/metrics recompute -dry-run
+go run ./cmd/metrics recompute -at 2026-11-24T13:00:00+03:30
+```
+
+The command reads each active contract's latest option quote and the latest
+underlying quote. It uses the option quote timestamp per contract by default;
+`-at` overrides the timestamp for every contract. Metrics use the configured
+`RISK_FREE_RATE` (default `0.30`) and HV20 from the stored daily prices. The
+summary logs read, calculated, skipped (including skip reasons), and stored
+counts. `-dry-run` calculates and reports without writing. Re-running with the
+same quote timestamps upserts the same `(contract_id, ts)` rows.

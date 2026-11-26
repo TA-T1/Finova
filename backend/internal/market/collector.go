@@ -182,52 +182,18 @@ func (c *Collector) storeMetrics(ctx context.Context, ts time.Time, jobs []metri
 	if len(jobs) == 0 {
 		return 0
 	}
-	hv := c.historicalVolatilities(ctx)
-
-	rows := make([]OptionMetrics, 0, len(jobs))
-	for _, job := range jobs {
-		if v, ok := hv[job.UnderlyingID]; ok {
-			job.HV = &v
-		}
-		m, err := computeMetrics(job, ts, c.rate)
-		if err != nil {
-			note(fmt.Errorf("metrics contract %d: %w", job.ContractID, err))
-			continue
-		}
-		rows = append(rows, m)
+	for i := range jobs {
+		jobs[i].TS = ts
 	}
-
-	if err := c.repo.UpsertOptionMetrics(ctx, rows); err != nil {
+	result, err := ComputeAndStoreMetrics(ctx, c.repo, jobs, c.rate, false, c.log)
+	if err != nil {
 		note(fmt.Errorf("store metrics: %w", err))
 		return 0
 	}
-	return len(rows)
-}
-
-// historicalVolatilities returns the HV20 of each underlying that has a full
-// window of daily prices, keyed by underlying id. Underlyings without enough
-// history are left out, so their contracts get no theoretical price. A failure
-// to load prices is logged and treated the same way: the rest of the metrics
-// do not depend on volatility history.
-func (c *Collector) historicalVolatilities(ctx context.Context) map[int]float64 {
-	closes, err := c.repo.RecentCloses(ctx, options.HVWindow+1)
-	if err != nil {
-		c.log.Warn("historical volatility unavailable: loading daily prices failed", "err", err)
-		return nil
+	for _, skipped := range result.Skipped {
+		note(fmt.Errorf("metrics contract %d: %s", skipped.ContractID, skipped.Reason))
 	}
-	out := make(map[int]float64, len(closes))
-	for id, series := range closes {
-		if len(series) != options.HVWindow+1 {
-			continue
-		}
-		v, err := options.HV20(series)
-		if err != nil {
-			c.log.Warn("historical volatility skipped", "underlyingId", id, "err", err)
-			continue
-		}
-		out[id] = v
-	}
-	return out
+	return result.Stored
 }
 
 // ensureUnderlying returns the id of the underlying with insCode, creating it if
