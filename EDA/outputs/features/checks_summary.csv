@@ -1,0 +1,6 @@
+﻿id,check,status,detail
+S7.01,"one row per symbol-day, key unique",PASS,"15847 rows, 27 symbols"
+S7.02,halted rows have no feature values,PASS,0 non-null cells on halted rows
+S7.03,no inf values,PASS,0
+S7.04,"RSI in [0,100], HV rank in [0,100]",PASS,"rsi_ok=True, rank_ok=True"
+S7.05,warm-up NaN is expected,INFO,close_sma60_ratio=89.4%; ma_ratio_20_60=89.4%; ma_cross_20_60=89.2%; hv_rank_250=53.9%; hv_rank_120=76.3%

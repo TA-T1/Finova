@@ -1,0 +1,10 @@
+{
+ "rows_compared": 8131,
+ "median_market_over_model": 1.3342156896551913,
+ "atm_rows": 1115,
+ "atm_median_iv": 0.7748029586699676,
+ "atm_median_hv20": 0.34293977576051915,
+ "atm_median_iv_over_hv": 2.2078984929345262,
+ "share_market_above_model": 0.8902963965071947,
+ "share_atm_iv_above_hv": 0.9417040358744395
+}

@@ -1,0 +1,21 @@
+﻿feature,group,lookback_active_days,definition
+ret_1,return,1,log(close_t / close_{t-1 active day})
+ret_5,return,5,log(close_t / close 5 active days earlier)
+ret_20,return,20,log(close_t / close 20 active days earlier)
+rsi_14,technical,15,"Wilder RSI, 14 active days, 0..100"
+close_sma20_ratio,technical,20,close / SMA20 - 1
+close_sma60_ratio,technical,60,close / SMA60 - 1
+ma_ratio_5_20,technical,20,SMA5 / SMA20 - 1
+ma_ratio_20_60,technical,60,SMA20 / SMA60 - 1
+ma_cross_5_20,technical,21,"+1 SMA5 crossed above SMA20 today, -1 crossed below, 0 no cross"
+ma_cross_20_60,technical,61,"+1 SMA20 crossed above SMA60 today, -1 crossed below, 0 no cross"
+atr_14_pct,technical,15,Wilder ATR(14) of adjusted high/low/close divided by close
+value_ratio_20,volume,20,traded value today / mean traded value of the last 20 active days (incl. today)
+tcount_ratio_20,volume,20,trade count today / mean trade count of the last 20 active days (incl. today)
+ind_buy_share,flow,1,retail share of buy value (retail + institutional)
+ind_net_ratio,flow,1,(retail buy value - retail sell value) / traded value
+ind_net_ratio_5,flow,5,mean of ind_net_ratio over the last 5 active days (min 3)
+ind_power_log,flow,1,log of the retail buyer power ratio (per-capita buy / per-capita sell)
+hv_20,volatility,20,"annualised std of daily log returns, 20 active days (min 15)"
+hv_rank_250,volatility,270,"HV20 position in its trailing 250-active-day min..max range, 0..100"
+hv_rank_120,volatility,140,"HV20 position in its trailing 120-active-day min..max range, 0..100"

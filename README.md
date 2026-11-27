@@ -12,7 +12,8 @@ entry/exit signals in a web interface.
 | `frontend/` | React/Vite web application |
 | `backtest/` | Pure-Python strategy backtest engine |
 | `data-pipeline/` | Python market and signal data pipeline |
-| `EDA/` | Exploratory data analysis |
+| `EDA/` | Exploratory data analysis and the underlying-stock features table |
+| `analytical-report/` | Backtest analytical report: scripts, tables and charts |
 | `docs/` | API contracts and project write-ups |
 
 ## Requirements

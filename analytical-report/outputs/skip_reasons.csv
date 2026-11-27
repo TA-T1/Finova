@@ -1,0 +1,5 @@
+﻿kind,count
+a leg priced below minimum premium,2010
+no price for a leg (strike outside the grid),2000
+price jump (capital action) while open,281
+no trading day near entry date,216

@@ -1,0 +1,4 @@
+﻿test,status,detail
+"cut the future (truncate data, features of past days unchanged)",PASS,{}
+"perturb the future (scramble later data, past features unchanged)",PASS,{}
+sanity: a deliberately leaky feature is caught,PASS,

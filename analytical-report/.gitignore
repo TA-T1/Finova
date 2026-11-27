@@ -1,0 +1,5 @@
+outputs/trades.csv
+outputs/skipped.csv
+outputs/equity_curves_base.json
+outputs/market_vs_model_rows.csv
+__pycache__/

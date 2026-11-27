@@ -1,0 +1,20 @@
+{
+ "option_rows": 59642,
+ "contracts": 1818,
+ "underlyings_with_options": 30,
+ "first_day": "2026-07-29",
+ "last_day": "2026-11-24",
+ "trading_days": 82,
+ "rows_with_volume": 15536,
+ "share_rows_with_volume": 0.26,
+ "rows_with_bid_ask": 626,
+ "rows_with_open_interest": 898,
+ "bid_ask_days": [
+  "2026-11-24"
+ ],
+ "earliest_expiry": "2026-11-25",
+ "latest_expiry": "2027-02-24",
+ "expiries_already_passed": 0,
+ "rows_per_contract_median": 30.0,
+ "price_history_days_3y": 718
+}
